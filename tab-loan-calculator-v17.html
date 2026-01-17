@@ -1,0 +1,2247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>TAB Loan Calculator v17</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: #F5F1EB; min-height: 100vh; color: #1a1a1a; }
+    #root { min-height: 100vh; }
+    html { scroll-behavior: smooth; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useMemo, useRef, useEffect } = React;
+
+    const colors = {
+      orange: '#E65C00', orangeLight: '#F9731A', green: '#4A7C59', greenLight: '#5D9E6F',
+      cream: '#F5F1EB', creamDark: '#EBE5DB', dark: '#1a1a1a', grey: '#666666',
+      greyLight: '#999999', white: '#FFFFFF', red: '#DC2626', amber: '#F59E0B',
+      purple: '#7C3AED', purpleLight: '#A78BFA',
+      teal: '#0D9488', tealLight: '#14B8A6', // Core Plus color
+    };
+
+    const defaultConfig = {
+      boeBaseRate: 3.75,
+      limits: { minLoan: 100000, maxLoan: 5000000, maxLoanReferral: 4000000, minPropertyValue: 150000, maxLtvResidential: 75, maxLtvCommercial: 70 },
+      maxPropertyValue: {
+        london: { residential: 3000000, commercial: 7750000 },
+        other: { residential: 2000000, commercial: 7750000 },
+      },
+      borrowerAge: { min: 21, max: 85 },
+      adverseCredit: [
+        'Bankruptcy/IVA/Insolvency in last 3 years',
+        'CCJs >£750 in last 2 years',
+        'Defaults >£750 in last 2 years',
+        'Missed mortgage payments in last 12 months',
+        'Repossession in last 3 years',
+      ],
+      fees: {
+        bridge: { arrangement: 2.0, exit: 0 },
+        mortgage: { arrangement: 2.0, exit: 2.0 },
+        adminBase: 1000,
+        adminBasePro: 2500,
+        adminPerProperty: 1000,
+        valuation: 999,
+      },
+      icr: { required: 1.25, stressAddOn: 1.0 },
+      mortgagePro: { prepaidInterestRate: 2.0 },
+      esgDiscounts: { epc: 0.33, sustainability: 0.33, social: 0.33 },
+      rates: {
+        mortgage: {
+          residential: [
+            { maxLtv: 50, margin: 3.50 }, { maxLtv: 60, margin: 4.00 },
+            { maxLtv: 70, margin: 4.50 }, { maxLtv: 75, margin: 5.00 },
+          ],
+          commercial: [
+            { maxLtv: 50, margin: 4.00 }, { maxLtv: 60, margin: 4.50 }, { maxLtv: 70, margin: 5.00 },
+          ],
+        },
+        // Bridge Core: rates split by loan size (under/over £500k)
+        bridgeUnder500k: {
+          residential: [
+            { maxLtv: 50, margin: 4.50 }, { maxLtv: 55, margin: 4.50 },
+            { maxLtv: 60, margin: 5.50 }, { maxLtv: 70, margin: 5.50 }, { maxLtv: 75, margin: 5.75 },
+          ],
+          commercial: [
+            { maxLtv: 50, margin: 5.25 }, { maxLtv: 55, margin: 5.25 },
+            { maxLtv: 60, margin: 5.50 }, { maxLtv: 65, margin: 6.00 },
+          ],
+        },
+        bridgeOver500k: {
+          residential: [
+            { maxLtv: 50, margin: 5.25 }, { maxLtv: 55, margin: 5.25 },
+            { maxLtv: 60, margin: 5.50 }, { maxLtv: 70, margin: 5.50 }, { maxLtv: 75, margin: 6.00 },
+          ],
+          commercial: [
+            { maxLtv: 50, margin: 5.25 }, { maxLtv: 55, margin: 5.25 },
+            { maxLtv: 60, margin: 5.50 }, { maxLtv: 65, margin: 6.00 },
+          ],
+        },
+        // Core Plus: rates in % per calendar month (pcm), NOT annual + Base
+        // 1st Charge rates
+        corePlus1st: {
+          residential: [
+            { maxLtv: 60, ratePcm: 0.95 }, { maxLtv: 65, ratePcm: 0.95 },
+            { maxLtv: 70, ratePcm: 1.00 },
+          ],
+          commercial: [
+            { maxLtv: 60, ratePcm: 1.00 }, { maxLtv: 65, ratePcm: 1.05 },
+          ],
+        },
+        // 2nd Charge rates
+        corePlus2nd: {
+          residential: [
+            { maxLtv: 60, ratePcm: 1.00 }, { maxLtv: 65, ratePcm: 1.05 },
+          ],
+          commercial: [
+            { maxLtv: 60, ratePcm: 1.05 }, { maxLtv: 65, ratePcm: 1.10 },
+          ],
+        },
+      },
+      // Core Plus rate loading (added to base pcm rate)
+      corePlusLoading: {
+        lightRefurb: 0.10,  // +0.10% pcm for light refurb (<10% OMV)
+        heavyRefurb: 0.20,  // +0.20% pcm for heavy refurb (>10% OMV)
+        adverse: 0.10,      // +0.10% pcm for adverse credit
+        offshore: 0.10,     // +0.10% pcm for complex offshore
+        charity: 0.10,      // +0.10% pcm for charity borrowers
+      },
+      // Core Plus max LTV limits
+      corePlusMaxLtv: {
+        first: { residential: 70, commercial: 65 },
+        second: { residential: 65, commercial: 65 },
+      },
+      terms: { bridge: { min: 1, max: 24 }, mortgage: { years: [3, 4, 5] } },
+      locations: {
+        accepted: [
+          { value: 'london', label: 'London Boroughs' },
+          { value: 'england', label: 'England (excl. London)' },
+          { value: 'wales', label: 'Wales' },
+          { value: 'scotland', label: 'Scotland (Mainland)' },
+        ],
+        rejected: [
+          { value: 'ni', label: 'Northern Ireland' },
+          { value: 'scotland_rural', label: 'Scotland (Rural/Islands)' },
+          { value: 'outside_uk', label: 'Outside UK' },
+        ]
+      },
+      propertyTypes: {
+        residential: [
+          { value: 'residential_investment', label: 'Residential Investment' },
+          { value: 'hmo', label: 'HMO' },
+          { value: 'mufb', label: 'Multi-Unit Freehold (MUFB)' },
+          { value: 'holiday_let', label: 'Holiday Let / AirBnB' },
+        ],
+        commercial: [
+          { value: 'warehouse', label: 'Warehouse' },
+          { value: 'industrial', label: 'Industrial Unit' },
+          { value: 'retail', label: 'Retail' },
+          { value: 'office', label: 'Office' },
+        ],
+      },
+      borrowerTypes: [
+        { value: 'individual', label: 'Individual', note: 'UK resident' },
+        { value: 'company', label: 'UK Limited Company' },
+        { value: 'llp', label: 'LLP' },
+        { value: 'partnership', label: 'Partnership' },
+        { value: 'trust', label: 'Trust' },
+      ],
+    };
+
+    const loadConfig = () => {
+      try {
+        const saved = localStorage.getItem('tabCalcV17');
+        if (saved) return { ...defaultConfig, ...JSON.parse(saved) };
+      } catch (e) {}
+      return defaultConfig;
+    };
+    const saveConfig = (config) => { try { localStorage.setItem('tabCalcV17', JSON.stringify(config)); } catch(e){} };
+
+    // Free-text enquiry parser - "Brain Dump" feature
+    function parseEnquiry(text) {
+      const result = {
+        location: null, locationMatch: null,
+        propertyType: null, propertyCategory: null, propertyMatch: null,
+        valuation: null, valuationMatch: null, valuationType: null,
+        loanAmount: null, loanAmountMatch: null,
+        termMonths: null, termMatch: null,
+        loanPurpose: null, purposeMatch: null,
+        borrowerType: null, borrowerMatch: null,
+        address: null,
+        rent: null, rentMatch: null, rentIsAnnual: false,
+        ltv: null, ltvMatch: null,
+        confidence: {},
+        warnings: [],
+        questions: [],
+      };
+      const lower = text.toLowerCase();
+
+      // ============ LOCATION DETECTION ============
+      // London postcodes (check first - most specific)
+      const londonPostcodeMatch = text.match(/\b(E|EC|N|NW|SE|SW|W|WC)\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b/i);
+      if (londonPostcodeMatch) {
+        result.location = 'london';
+        result.locationMatch = londonPostcodeMatch[0];
+        result.address = londonPostcodeMatch[0].toUpperCase();
+        result.confidence.location = 'high';
+      }
+
+      // London boroughs and areas
+      const londonAreas = [
+        'london', 'greater london', 'central london', 'east london', 'west london', 'north london', 'south london',
+        'hackney', 'islington', 'camden', 'westminster', 'kensington', 'chelsea', 'hammersmith', 'fulham',
+        'wandsworth', 'lambeth', 'southwark', 'tower hamlets', 'greenwich', 'lewisham', 'bromley', 'croydon',
+        'sutton', 'merton', 'kingston', 'richmond', 'hounslow', 'ealing', 'brent', 'harrow', 'barnet',
+        'haringey', 'enfield', 'waltham forest', 'redbridge', 'havering', 'barking', 'dagenham', 'newham',
+        'bexley', 'hillingdon', 'city of london', 'canary wharf', 'stratford', 'shoreditch', 'brixton',
+        'peckham', 'dulwich', 'clapham', 'battersea', 'putney', 'wimbledon', 'tooting', 'balham',
+        'hampstead', 'highgate', 'muswell hill', 'crouch end', 'finsbury park', 'angel', 'kings cross',
+        'notting hill', 'paddington', 'marylebone', 'mayfair', 'soho', 'covent garden', 'holborn',
+      ];
+      if (!result.location) {
+        const londonMatch = londonAreas.find(place => lower.includes(place));
+        if (londonMatch) {
+          result.location = 'london';
+          result.locationMatch = londonMatch;
+          result.confidence.location = 'high';
+        }
+      }
+
+      // England - major cities, towns, counties
+      const englandPlaces = [
+        'manchester', 'birmingham', 'leeds', 'liverpool', 'bristol', 'sheffield', 'newcastle', 'nottingham',
+        'leicester', 'coventry', 'bradford', 'plymouth', 'southampton', 'portsmouth', 'reading', 'derby',
+        'luton', 'preston', 'milton keynes', 'norwich', 'oxford', 'cambridge', 'brighton', 'bournemouth',
+        'swindon', 'peterborough', 'york', 'exeter', 'bath', 'cheltenham', 'gloucester', 'worcester',
+        'hereford', 'lincoln', 'hull', 'middlesbrough', 'sunderland', 'durham', 'carlisle', 'blackpool',
+        'lancaster', 'chester', 'warrington', 'stockport', 'bolton', 'wigan', 'rochdale', 'oldham',
+        'salford', 'bury', 'blackburn', 'burnley', 'huddersfield', 'wakefield', 'doncaster', 'rotherham',
+        'barnsley', 'scunthorpe', 'grimsby', 'northampton', 'corby', 'kettering', 'wellingborough',
+        'bedford', 'stevenage', 'watford', 'st albans', 'hemel hempstead', 'harlow', 'basildon',
+        'southend', 'colchester', 'ipswich', 'lowestoft', 'kings lynn', 'great yarmouth', 'taunton',
+        'yeovil', 'weymouth', 'poole', 'salisbury', 'basingstoke', 'winchester', 'eastbourne', 'hastings',
+        'crawley', 'guildford', 'woking', 'slough', 'maidenhead', 'high wycombe', 'aylesbury', 'banbury',
+        // Counties
+        'england', 'hertfordshire', 'essex', 'kent', 'surrey', 'sussex', 'hampshire', 'berkshire',
+        'buckinghamshire', 'oxfordshire', 'cambridgeshire', 'norfolk', 'suffolk', 'lincolnshire',
+        'yorkshire', 'lancashire', 'cheshire', 'staffordshire', 'warwickshire', 'worcestershire',
+        'devon', 'cornwall', 'dorset', 'somerset', 'wiltshire', 'gloucestershire', 'herefordshire',
+        'shropshire', 'northamptonshire', 'bedfordshire', 'leicestershire', 'derbyshire', 'nottinghamshire',
+        'durham', 'northumberland', 'cumbria', 'merseyside', 'tyneside', 'west midlands', 'east midlands',
+        'south west', 'south east', 'north west', 'north east', 'east anglia',
+      ];
+      if (!result.location) {
+        const englandMatch = englandPlaces.find(place => lower.includes(place));
+        if (englandMatch) {
+          result.location = 'england';
+          result.locationMatch = englandMatch;
+          result.confidence.location = 'high';
+        }
+      }
+
+      // Wales
+      const walesPlaces = ['cardiff', 'swansea', 'newport', 'wrexham', 'barry', 'neath', 'bridgend', 'cwmbran', 'llanelli', 'wales', 'welsh', 'cymru'];
+      if (!result.location) {
+        const walesMatch = walesPlaces.find(place => lower.includes(place));
+        if (walesMatch) {
+          result.location = 'wales';
+          result.locationMatch = walesMatch;
+          result.confidence.location = 'high';
+        }
+      }
+
+      // Scotland
+      const scotlandPlaces = ['edinburgh', 'glasgow', 'aberdeen', 'dundee', 'inverness', 'stirling', 'perth', 'scotland', 'scottish'];
+      if (!result.location) {
+        const scotlandMatch = scotlandPlaces.find(place => lower.includes(place));
+        if (scotlandMatch) {
+          result.location = 'scotland';
+          result.locationMatch = scotlandMatch;
+          result.confidence.location = 'medium';
+          result.warnings.push('Scotland - check if mainland or rural/islands');
+        }
+      }
+
+      // Northern Ireland (rejected)
+      const niPlaces = ['belfast', 'northern ireland', 'derry', 'londonderry', 'lisburn', 'newry'];
+      if (!result.location && niPlaces.some(p => lower.includes(p))) {
+        result.location = 'ni';
+        result.locationMatch = niPlaces.find(p => lower.includes(p));
+        result.confidence.location = 'high';
+        result.warnings.push('Northern Ireland - OUT OF POLICY');
+      }
+
+      // Extract any postcode for address field
+      if (!result.address) {
+        const postcodeMatch = text.match(/([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})/i);
+        if (postcodeMatch) result.address = postcodeMatch[1].toUpperCase();
+      }
+
+      // ============ PROPERTY TYPE DETECTION ============
+      const propertyPatterns = [
+        { pattern: /\bhmo\b|house in multiple|house of multiple/i, type: 'hmo', cat: 'residential', label: 'HMO' },
+        { pattern: /\bmufb\b|multi.?unit|block of flats|freehold block/i, type: 'mufb', cat: 'residential', label: 'MUFB' },
+        { pattern: /holiday.?let|airbnb|short.?term.?let|serviced.?accommodation|sa\b/i, type: 'holiday_let', cat: 'residential', label: 'Holiday Let' },
+        { pattern: /warehouse|storage unit|distribution/i, type: 'warehouse', cat: 'commercial', label: 'Warehouse' },
+        { pattern: /industrial|factory|workshop|manufacturing/i, type: 'industrial', cat: 'commercial', label: 'Industrial' },
+        { pattern: /\bretail\b|shop\b|store\b|high street/i, type: 'retail', cat: 'commercial', label: 'Retail' },
+        { pattern: /\boffice\b|office block|serviced office/i, type: 'office', cat: 'commercial', label: 'Office' },
+        { pattern: /\bpub\b|restaurant|cafe|hotel|b&b|guest house|hospitality/i, type: 'hospitality', cat: 'commercial', label: 'Hospitality' },
+        { pattern: /student|pbsa|student accommodation/i, type: 'student', cat: 'commercial', label: 'Student' },
+        { pattern: /mixed.?use|semi.?commercial|part.?commercial/i, type: 'mixed', cat: 'commercial', label: 'Mixed Use' },
+        { pattern: /\bbtl\b|buy.?to.?let|rental property|investment property/i, type: 'residential_investment', cat: 'residential', label: 'BTL' },
+        { pattern: /residential|flat\b|apartment|house\b|terrace|semi.?detached|detached/i, type: 'residential_investment', cat: 'residential', label: 'Residential' },
+      ];
+      for (const p of propertyPatterns) {
+        const match = text.match(p.pattern);
+        if (match) {
+          result.propertyType = p.type;
+          result.propertyCategory = p.cat;
+          result.propertyMatch = match[0];
+          result.confidence.propertyType = 'high';
+          break;
+        }
+      }
+      if (!result.propertyType && lower.includes('commercial')) {
+        result.propertyCategory = 'commercial';
+        result.propertyMatch = 'commercial';
+        result.questions.push('What type of commercial property?');
+      }
+
+      // ============ VALUATION DETECTION (improved) ============
+      // Priority patterns for value
+      const valuePatterns = [
+        { pattern: /(?:o\.?m\.?v|current value|market value|valuation|valued at)[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i, type: 'OMV' },
+        { pattern: /(?:worth|value)[:\s]*(?:around |approx(?:imately)? |about )?[£]?([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i, type: 'value' },
+        { pattern: /(?:gdv|gross development value)[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i, type: 'GDV' },
+        { pattern: /(?:purchase(?:d| for)?|bought for|agreed|asking)[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i, type: 'purchase' },
+        { pattern: /[£]([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?\s*(?:property|value|valuation)/i, type: 'value' },
+        { pattern: /property[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i, type: 'value' },
+      ];
+
+      for (const vp of valuePatterns) {
+        const match = text.match(vp.pattern);
+        if (match) {
+          let val = parseFloat(match[1].replace(/,/g, ''));
+          const suffix = (match[2] || '').toLowerCase();
+          if (suffix.startsWith('m') && val < 100) val *= 1000000;
+          else if (suffix === 'k' && val < 10000) val *= 1000;
+          else if (val > 100 && val < 1000) val *= 1000; // Assume "500" means 500k
+
+          if (val >= 100000 && val <= 100000000) {
+            result.valuation = val;
+            result.valuationMatch = match[0];
+            result.valuationType = vp.type;
+            result.confidence.valuation = vp.type === 'OMV' ? 'high' : 'medium';
+            if (vp.type === 'GDV') result.warnings.push('GDV detected - is this current value or future?');
+            if (vp.type === 'purchase') result.warnings.push('Purchase price detected - confirm if this is current value');
+            break;
+          }
+        }
+      }
+
+      // Fallback: look for any large £ amount
+      if (!result.valuation) {
+        const fallbackMatch = text.match(/[£]([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i);
+        if (fallbackMatch) {
+          let val = parseFloat(fallbackMatch[1].replace(/,/g, ''));
+          const suffix = (fallbackMatch[2] || '').toLowerCase();
+          if (suffix.startsWith('m') && val < 100) val *= 1000000;
+          else if (suffix === 'k' && val < 10000) val *= 1000;
+          if (val >= 150000 && val <= 50000000) {
+            result.valuation = val;
+            result.valuationMatch = fallbackMatch[0];
+            result.confidence.valuation = 'low';
+            result.questions.push('Is ' + fallbackMatch[0] + ' the property value?');
+          }
+        }
+      }
+
+      // ============ RENT/INCOME DETECTION (improved) ============
+      const rentPatterns = [
+        // Specific rent patterns
+        { pattern: /(?:rent|rental)[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(k)?\s*(?:p\.?c\.?m|per month|monthly|pm|\/month)/i, annual: false },
+        { pattern: /(?:rent|rental)[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(k)?\s*(?:p\.?a|per annum|annual|pa|\/year|per year)/i, annual: true },
+        { pattern: /(?:income|yield)[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(k)?\s*(?:p\.?a|per annum|annual|pa)/i, annual: true },
+        { pattern: /(?:income|yield)[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(k)?\s*(?:p\.?c\.?m|per month|monthly|pm)/i, annual: false },
+        // HMO room rent pattern
+        { pattern: /(\d+)\s*(?:rooms?|beds?|units?)[^\d]*[£]?([\d,]+)\s*(?:each|per room|per unit|pw|per week)/i, perUnit: true, weekly: true },
+        { pattern: /(\d+)\s*(?:rooms?|beds?|units?)[^\d]*[£]?([\d,]+)\s*(?:each|per room|per unit|pcm|per month)/i, perUnit: true },
+        // Generic rent pattern
+        { pattern: /[£]([\d,]+(?:\.\d+)?)\s*(k)?\s*(?:p\.?c\.?m|pcm|per month|monthly|pm|\/mo)/i, annual: false },
+        { pattern: /[£]([\d,]+(?:\.\d+)?)\s*(k)?\s*(?:p\.?a|pa|per annum|annual|\/year)/i, annual: true },
+      ];
+
+      for (const rp of rentPatterns) {
+        const match = text.match(rp.pattern);
+        if (match) {
+          let rent;
+          if (rp.perUnit) {
+            // Multi-unit: "6 rooms at £600 each"
+            const units = parseInt(match[1]);
+            let perUnit = parseFloat(match[2].replace(/,/g, ''));
+            if (rp.weekly) perUnit = perUnit * 52 / 12; // Convert weekly to monthly
+            rent = units * perUnit;
+            result.rentMatch = match[0] + ` (${units} × £${Math.round(perUnit)})`;
+          } else {
+            rent = parseFloat(match[1].replace(/,/g, ''));
+            const suffix = (match[2] || '').toLowerCase();
+            if (suffix === 'k' && rent < 1000) rent *= 1000;
+            if (rp.annual || rent > 15000) {
+              rent = rent / 12;
+              result.rentIsAnnual = true;
+            }
+            result.rentMatch = match[0];
+          }
+          if (rent >= 100 && rent <= 200000) {
+            result.rent = Math.round(rent);
+            result.confidence.rent = 'high';
+            break;
+          }
+        }
+      }
+
+      // ============ LOAN AMOUNT DETECTION ============
+      const loanPatterns = [
+        /(?:looking for|need|require|want|borrow|raise|loan of|lending)[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i,
+        /(?:loan|borrowing|debt|finance)[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i,
+      ];
+      for (const lp of loanPatterns) {
+        const match = text.match(lp);
+        if (match) {
+          let amount = parseFloat(match[1].replace(/,/g, ''));
+          const suffix = (match[2] || '').toLowerCase();
+          if (suffix.startsWith('m') && amount < 100) amount *= 1000000;
+          else if (suffix === 'k' && amount < 10000) amount *= 1000;
+          if (amount >= 50000 && amount <= 10000000) {
+            result.loanAmount = amount;
+            result.loanAmountMatch = match[0];
+            break;
+          }
+        }
+      }
+
+      // ============ LTV DETECTION ============
+      const ltvMatch = text.match(/(\d{2,3})\s*%?\s*(?:ltv|loan.?to.?value|gearing)/i) ||
+                       text.match(/(?:ltv|loan.?to.?value|gearing)[:\s]*(\d{2,3})\s*%?/i) ||
+                       text.match(/(?:want|need|require|looking for)[^\d]*(\d{2})\s*%/i);
+      if (ltvMatch) {
+        const ltv = parseInt(ltvMatch[1]);
+        if (ltv >= 10 && ltv <= 90) {
+          result.ltv = ltv;
+          result.ltvMatch = ltvMatch[0];
+        }
+      }
+
+      // ============ TERM DETECTION ============
+      const termPatterns = [
+        { pattern: /(\d{1,2})\s*(?:months?|mo)\b/i, months: true },
+        { pattern: /(\d{1,2})\s*(?:years?|yr)\b/i, months: false },
+        { pattern: /(?:term|period)[:\s]*(\d{1,2})\s*(?:months?|mo)/i, months: true },
+        { pattern: /(?:term|period)[:\s]*(\d{1,2})\s*(?:years?|yr)?/i, months: false },
+      ];
+      for (const tp of termPatterns) {
+        const match = text.match(tp.pattern);
+        if (match) {
+          const num = parseInt(match[1]);
+          result.termMonths = tp.months ? num : num * 12;
+          result.termMatch = match[0];
+          break;
+        }
+      }
+
+      // ============ PRODUCT DETECTION ============
+      if (lower.match(/\bbridge|bridging|short.?term\b/)) {
+        result.loanPurpose = 'bridge';
+        result.purposeMatch = text.match(/bridge|bridging|short.?term/i)?.[0];
+      } else if (lower.match(/\bmortgage|long.?term|btl|buy.?to.?let|term.?loan\b/)) {
+        result.loanPurpose = 'mortgage';
+        result.purposeMatch = text.match(/mortgage|long.?term|btl|buy.?to.?let|term.?loan/i)?.[0];
+      } else if (result.termMonths) {
+        // Infer from term
+        result.loanPurpose = result.termMonths <= 24 ? 'bridge' : 'mortgage';
+        result.confidence.loanPurpose = 'inferred';
+      }
+
+      // ============ BORROWER TYPE DETECTION ============
+      const borrowerPatterns = [
+        { pattern: /\b(?:limited company|ltd|spv|special purpose)\b/i, type: 'company', label: 'Ltd Company' },
+        { pattern: /\bllp\b|limited liability partnership/i, type: 'llp', label: 'LLP' },
+        { pattern: /\bpartnership\b/i, type: 'partnership', label: 'Partnership' },
+        { pattern: /\btrust\b|family trust|discretionary trust/i, type: 'trust', label: 'Trust' },
+        { pattern: /individual|personal(?:ly)?|in (?:my|their|his|her) name|mr and mrs|mr & mrs|husband|wife|couple|brother|sister/i, type: 'individual', label: 'Individual' },
+      ];
+      for (const bp of borrowerPatterns) {
+        const match = text.match(bp.pattern);
+        if (match) {
+          result.borrowerType = bp.type;
+          result.borrowerMatch = match[0];
+          break;
+        }
+      }
+
+      // ============ GENERATE QUESTIONS ============
+      if (!result.location) result.questions.push('Where is the property located?');
+      if (!result.propertyType) result.questions.push('What type of property is it?');
+      if (!result.valuation) result.questions.push('What is the property value?');
+      if (!result.loanPurpose) result.questions.push('Bridge or Mortgage?');
+      if (!result.borrowerType) result.questions.push('Individual or Company borrower?');
+      if (result.loanPurpose === 'mortgage' && !result.rent) result.questions.push('What is the rental income?');
+
+      return result;
+    }
+
+    const fmt = {
+      currency: (n) => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n),
+      currencyFull: (n) => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n),
+      percent: (n) => n.toFixed(2) + '%',
+    };
+
+    // UI Components
+    function Section({ title, subtitle, status, isOpen, onToggle, children, scrollRef }) {
+      const statusColors = { complete: colors.green, error: colors.red, pending: colors.greyLight, active: colors.orange };
+      const statusIcons = { complete: '✓', error: '✗', pending: '○', active: '●' };
+      return (
+        <div ref={scrollRef} style={{ background: colors.white, borderRadius: '16px', marginBottom: '16px', overflow: 'hidden', boxShadow: isOpen ? '0 4px 12px rgba(0,0,0,0.1)' : 'none', border: isOpen ? `2px solid ${colors.orange}` : '2px solid transparent' }}>
+          <button onClick={onToggle} style={{ width: '100%', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
+            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: statusColors[status], color: colors.white, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '600' }}>{statusIcons[status]}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: '16px', fontWeight: '600', color: colors.dark }}>{title}</div>
+              {subtitle && <div style={{ fontSize: '13px', color: colors.grey, marginTop: '2px' }}>{subtitle}</div>}
+            </div>
+            <div style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s', color: colors.grey }}>▼</div>
+          </button>
+          {isOpen && <div style={{ padding: '0 20px 20px', borderTop: `1px solid ${colors.creamDark}` }}><div style={{ paddingTop: '20px' }}>{children}</div></div>}
+        </div>
+      );
+    }
+
+    function OptionButton({ selected, onClick, children, variant = 'default', small }) {
+      let style = { width: '100%', padding: small ? '12px 16px' : '16px 20px', borderRadius: '10px', border: '2px solid', fontSize: small ? '13px' : '15px', fontWeight: '500', cursor: 'pointer', textAlign: 'left', background: colors.white, borderColor: colors.creamDark };
+      if (selected && variant === 'default') style = { ...style, borderColor: colors.green, background: '#F0FDF4' };
+      if (selected && variant === 'purple') style = { ...style, borderColor: colors.purple, background: '#EDE9FE' };
+      if (variant === 'danger' && selected) style = { ...style, borderColor: colors.red, background: '#FEF2F2' };
+      return <button onClick={onClick} style={style}>{children}</button>;
+    }
+
+    function InputField({ label, prefix, suffix, value, onChange, type = 'text', placeholder }) {
+      return (
+        <div style={{ marginBottom: '16px' }}>
+          {label && <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: colors.grey, marginBottom: '8px' }}>{label}</label>}
+          <div style={{ position: 'relative' }}>
+            {prefix && <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: colors.grey, fontSize: '16px' }}>{prefix}</span>}
+            <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{ width: '100%', padding: '14px 16px', paddingLeft: prefix ? '36px' : '16px', paddingRight: suffix ? '80px' : '16px', fontSize: '16px', fontWeight: '500', border: `2px solid ${colors.creamDark}`, borderRadius: '10px', outline: 'none', background: colors.white }} />
+            {suffix && <span style={{ position: 'absolute', right: '16px', top: '50%', transform: 'translateY(-50%)', color: colors.grey, fontSize: '14px' }}>{suffix}</span>}
+          </div>
+        </div>
+      );
+    }
+
+    // Main App
+    function App() {
+      const [config, setConfig] = useState(loadConfig);
+      const [showAdmin, setShowAdmin] = useState(false);
+      const [openSection, setOpenSection] = useState('enquiry');
+      const [freeText, setFreeText] = useState('');
+      const [parsed, setParsed] = useState(null); // Stores parsed result for feedback panel
+
+      const [data, setData] = useState({
+        location: null,
+        propertyType: null,
+        propertyCategory: null,
+        valuation: '',
+        address: '',
+        loanPurpose: null, // 'bridge', 'corePlus', or 'mortgage'
+        rent: '',
+        rentMode: null, // 'know_rent' or 'want_max'
+        borrowerType: null,
+        borrowerName: '',
+        creditClean: null,
+        termMonths: '',
+        numProperties: 1,
+        esg: { epc: false, sustainability: false, social: false },
+        // Core Plus specific
+        corePlusCharge: 'first', // 'first' or 'second'
+        corePlusFirstChargeBalance: '', // For 2nd charge: existing 1st charge balance
+        corePlusLoading: { lightRefurb: false, heavyRefurb: false, adverse: false, offshore: false, charity: false },
+        // Loan override - optional, leave blank for max
+        loanOverride: '',
+      });
+
+      const sectionRefs = {
+        enquiry: useRef(null),
+        location: useRef(null),
+        property: useRef(null),
+        valuation: useRef(null),
+        product: useRef(null),
+        rental: useRef(null),
+        borrower: useRef(null),
+        credit: useRef(null),
+        terms: useRef(null),
+        result: useRef(null),
+      };
+
+      const updateData = (key, value) => setData(prev => ({ ...prev, [key]: value }));
+
+      const nextSection = (current) => {
+        const flow = data.loanPurpose === 'mortgage'
+          ? ['enquiry', 'location', 'property', 'valuation', 'product', 'rental', 'borrower', 'credit', 'terms', 'result']
+          : ['enquiry', 'location', 'property', 'valuation', 'product', 'borrower', 'credit', 'terms', 'result']; // Bridge & Core Plus skip rental
+        const idx = flow.indexOf(current);
+        if (idx < flow.length - 1) {
+          const next = flow[idx + 1];
+          setOpenSection(next);
+          setTimeout(() => sectionRefs[next]?.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+        }
+      };
+
+      // Parse and pre-fill from free text - "Brain Dump" feature
+      const handleParseText = () => {
+        if (!freeText.trim()) return;
+        const result = parseEnquiry(freeText);
+        setParsed(result); // Store for feedback panel
+
+        // Apply parsed values to form
+        if (result.location) updateData('location', result.location);
+        if (result.propertyType) {
+          updateData('propertyType', result.propertyType);
+          updateData('propertyCategory', result.propertyCategory);
+        }
+        if (result.valuation) updateData('valuation', result.valuation.toString());
+        if (result.borrowerType) updateData('borrowerType', result.borrowerType);
+        if (result.address) updateData('address', result.address);
+        if (result.loanPurpose) {
+          updateData('loanPurpose', result.loanPurpose);
+          if (result.loanPurpose === 'mortgage' && !result.termMonths) {
+            updateData('termMonths', '36'); // Default 3 years for mortgage
+          }
+        }
+        if (result.termMonths) updateData('termMonths', result.termMonths.toString());
+        if (result.rent) {
+          updateData('rent', result.rent.toString());
+          updateData('rentMode', 'know_rent');
+        }
+
+        // Stay on enquiry section to show feedback, don't auto-advance
+      };
+
+      // ========== CALCULATION ENGINE ==========
+      const calculations = useMemo(() => {
+        const valuation = parseFloat(data.valuation) || 0;
+        const rentInput = parseFloat(data.rent) || 0;
+        const isCommercial = data.propertyCategory === 'commercial';
+        const maxLtvPercent = isCommercial ? config.limits.maxLtvCommercial : config.limits.maxLtvResidential;
+        const maxLtvLoan = Math.min(valuation * (maxLtvPercent / 100), config.limits.maxLoan);
+
+        const propType = isCommercial ? 'commercial' : 'residential';
+        const mortgageRates = config.rates.mortgage?.[propType] || [];
+
+        // Bridge Core: rates depend on loan size (under/over £500k)
+        // We'll determine which rate table to use based on max loan amount
+        const getBridgeRates = (loanAmount) => {
+          if (loanAmount < 500000) {
+            return config.rates.bridgeUnder500k?.[propType] || [];
+          }
+          return config.rates.bridgeOver500k?.[propType] || [];
+        };
+
+        // Commercial bridge max LTV is 65% (not 70%)
+        const bridgeMaxLtvCommercial = 65;
+
+        const icrRequired = config.icr.required;
+        const stressAddOn = config.icr.stressAddOn;
+        const prepaidRate = config.mortgagePro.prepaidInterestRate;
+
+        // Get margin for LTV - returns the margin for the tier that covers this LTV
+        const getMargin = (ltv, rates) => {
+          for (const tier of rates) {
+            if (ltv <= tier.maxLtv) return tier.margin;
+          }
+          return null;
+        };
+
+        // ===== FIND RENT REQUIRED FOR MAX LTV =====
+        // Moved BEFORE findMaxLoanForRent so we can use it for want_max mode
+        const findRentForMaxLtv = (isPro) => {
+          if (valuation <= 0) return { rent: 0, stressRate: 0, payRate: 0 };
+
+          const ltv = maxLtvPercent;
+          const margin = getMargin(ltv, mortgageRates);
+          if (margin === null) return { rent: 0, stressRate: 0, payRate: 0 };
+
+          const payRate = margin + config.boeBaseRate;
+          const stressRate = isPro
+            ? (payRate - prepaidRate) + stressAddOn
+            : payRate + stressAddOn;
+
+          // Rent needed = Loan × Stress Rate × ICR Required
+          const annualInterest = maxLtvLoan * (stressRate / 100);
+          const annualRentNeeded = annualInterest * icrRequired;
+          const monthlyRentNeeded = annualRentNeeded / 12;
+
+          return { rent: Math.ceil(monthlyRentNeeded), stressRate, payRate };
+        };
+
+        // Calculate rent required for max LTV FIRST (needed for want_max mode)
+        const rentForMaxStandard = findRentForMaxLtv(false);
+        const rentForMaxPro = findRentForMaxLtv(true);
+
+        // DETERMINE EFFECTIVE RENT based on mode
+        // If user selected "want_max" mode, use the calculated rent for max LTV
+        // Otherwise use the rent they entered
+        const rent = data.rentMode === 'want_max'
+          ? rentForMaxPro.rent  // Use Pro's required rent (higher, ensures both products work)
+          : rentInput;
+
+        console.log('RENT MODE:', data.rentMode, 'rentInput:', rentInput, 'rentForMaxPro:', rentForMaxPro.rent, 'EFFECTIVE RENT:', rent);
+
+        // ===== FIND MAX LOAN FOR GIVEN RENT =====
+        // Iterates DOWN from max LTV in £1000 steps to find highest loan that passes ICR
+        const findMaxLoanForRent = (monthlyRent, isPro) => {
+          if (valuation <= 0 || monthlyRent <= 0) {
+            return { loan: 0, ltv: 0, payRate: 0, stressRate: 0, icr: 0, limited: 'none' };
+          }
+
+          const annualRent = monthlyRent * 12;
+
+          // Start from max LTV loan, round down to nearest £1000
+          const startLoan = Math.floor(maxLtvLoan / 1000) * 1000;
+
+          // Try each £1000 from max down to min
+          for (let loan = startLoan; loan >= config.limits.minLoan; loan -= 1000) {
+            const ltv = (loan / valuation) * 100;
+            const margin = getMargin(ltv, mortgageRates);
+            if (margin === null) continue;
+
+            const payRate = margin + config.boeBaseRate;
+
+            // KEY DIFFERENCE:
+            // Standard: stress = pay rate + 1%
+            // Pro: stress = (pay rate - 2% prepaid) + 1% = pay rate - 1%
+            const stressRate = isPro
+              ? (payRate - prepaidRate) + stressAddOn  // Pro: lower stress rate
+              : payRate + stressAddOn;                  // Standard: higher stress rate
+
+            const annualInterest = loan * (stressRate / 100);
+            const icr = annualRent / annualInterest;
+
+            if (icr >= icrRequired) {
+              const atMaxLtv = loan >= startLoan - 1000;
+              return {
+                loan,
+                ltv,
+                payRate,
+                stressRate,
+                icr,
+                limited: atMaxLtv ? 'ltv' : 'icr'
+              };
+            }
+          }
+
+          // Nothing passes - rent too low
+          return { loan: 0, ltv: 0, payRate: 0, stressRate: 0, icr: 0, limited: 'icr_fail' };
+        };
+
+        // Calculate mortgage max loans using EFFECTIVE rent
+        const mortgageStandard = rent > 0 ? findMaxLoanForRent(rent, false) : null;
+        const mortgagePro = rent > 0 ? findMaxLoanForRent(rent, true) : null;
+
+        // Calculate advantage
+        const proAdvantage = (mortgagePro?.loan || 0) - (mortgageStandard?.loan || 0);
+        const rentSaving = rentForMaxStandard.rent - rentForMaxPro.rent;
+
+        // Bridge (no ICR) - use correct max LTV for commercial (65%)
+        const bridgeMaxLtv = isCommercial ? bridgeMaxLtvCommercial : config.limits.maxLtvResidential;
+        const bridgeMaxLoan = Math.min(valuation * (bridgeMaxLtv / 100), config.limits.maxLoan);
+        const bridgeRates = getBridgeRates(bridgeMaxLoan);
+        const bridgeMargin = getMargin(bridgeMaxLtv, bridgeRates);
+        const bridgePayRate = bridgeMargin ? bridgeMargin + config.boeBaseRate : 0;
+
+        // ===== CORE PLUS CALCULATIONS =====
+        // Core Plus uses % per calendar month (pcm), NOT annual + Base
+        // Rates depend on 1st vs 2nd charge
+        const isSecondCharge = data.corePlusCharge === 'second';
+        const corePlusRates = isSecondCharge
+          ? config.rates.corePlus2nd?.[propType] || []
+          : config.rates.corePlus1st?.[propType] || [];
+
+        const getCorePlusRate = (ltv) => {
+          for (const tier of corePlusRates) {
+            if (ltv <= tier.maxLtv) return tier.ratePcm;
+          }
+          return null; // Above max - may need referral
+        };
+
+        // Calculate rate loading
+        let corePlusRateLoading = 0;
+        if (data.corePlusLoading?.lightRefurb) corePlusRateLoading += config.corePlusLoading?.lightRefurb || 0.10;
+        if (data.corePlusLoading?.heavyRefurb) corePlusRateLoading += config.corePlusLoading?.heavyRefurb || 0.20;
+        if (data.corePlusLoading?.adverse) corePlusRateLoading += config.corePlusLoading?.adverse || 0.10;
+        if (data.corePlusLoading?.offshore) corePlusRateLoading += config.corePlusLoading?.offshore || 0.10;
+        if (data.corePlusLoading?.charity) corePlusRateLoading += config.corePlusLoading?.charity || 0.10;
+
+        // Get max LTV for Core Plus based on charge type and property type
+        const corePlusMaxLtvConfig = isSecondCharge
+          ? config.corePlusMaxLtv?.second
+          : config.corePlusMaxLtv?.first;
+        const corePlusMaxLtv = isCommercial
+          ? (corePlusMaxLtvConfig?.commercial || 65)
+          : (corePlusMaxLtvConfig?.residential || 70);
+
+        // Check if LTV requires referral (rate table doesn't cover it)
+        const corePlusNeedsReferral = corePlusRates.length > 0 &&
+          corePlusRates[corePlusRates.length - 1].maxLtv < corePlusMaxLtv;
+
+        const corePlusMaxLtvLoan = Math.min(valuation * (corePlusMaxLtv / 100), config.limits.maxLoan);
+
+        // ===== BUILD FULL QUOTE DETAILS =====
+        const term = parseInt(data.termMonths) || (data.loanPurpose === 'bridge' || data.loanPurpose === 'corePlus' ? 12 : 36);
+
+        const buildQuote = (grossLoan, isPro, isBridge) => {
+          if (grossLoan <= 0 || valuation <= 0) return null;
+
+          const ltv = (grossLoan / valuation) * 100;
+          const rates = isBridge ? getBridgeRates(grossLoan) : mortgageRates;
+          const margin = getMargin(ltv, rates);
+          if (margin === null) return null;
+
+          const payRate = margin + config.boeBaseRate;
+          const effectiveRate = isPro ? payRate - prepaidRate : payRate;
+          const stressRate = isPro ? effectiveRate + stressAddOn : payRate + stressAddOn;
+
+          // ICR
+          let icr = 0;
+          if (rent > 0 && !isBridge) {
+            const annualInterest = grossLoan * (stressRate / 100);
+            icr = (rent * 12) / annualInterest;
+          }
+
+          // Fees
+          const arrangementFee = grossLoan * (config.fees.mortgage.arrangement / 100);
+          const adminFee = isPro
+            ? config.fees.adminBasePro + Math.max(0, data.numProperties - 1) * config.fees.adminPerProperty
+            : config.fees.adminBase + Math.max(0, data.numProperties - 1) * config.fees.adminPerProperty;
+          const valuationFee = config.fees.valuation;
+
+          // ESG
+          let esgDiscount = 0;
+          if (data.esg.epc) esgDiscount += config.esgDiscounts.epc;
+          if (data.esg.sustainability) esgDiscount += config.esgDiscounts.sustainability;
+          if (data.esg.social) esgDiscount += config.esgDiscounts.social;
+          const exitFeePercent = Math.max(0, config.fees.mortgage.exit - esgDiscount);
+          const exitFee = grossLoan * (exitFeePercent / 100);
+
+          // Interest - for Pro, monthly is on EFFECTIVE rate (after prepaid deducted)
+          // You don't pay twice - prepaid covers part of the interest upfront
+          const monthlyInterest = isPro
+            ? grossLoan * (effectiveRate / 100) / 12  // Pro: pay on effective rate
+            : grossLoan * (payRate / 100) / 12;       // Standard: pay on full rate
+          const totalInterest = monthlyInterest * term;
+          const prepaidInterest = isPro ? grossLoan * (prepaidRate / 100) * (term / 12) : 0;
+
+          // Net
+          const servicedDeductions = arrangementFee + adminFee + valuationFee + (isPro ? prepaidInterest : 0);
+          const servicedNet = grossLoan - servicedDeductions;
+
+          const retainedDeductions = arrangementFee + adminFee + valuationFee + totalInterest;
+          const retainedNet = grossLoan - retainedDeductions;
+
+          return {
+            grossLoan, ltv, margin, payRate, effectiveRate, stressRate, icr,
+            arrangementFee, adminFee, valuationFee, exitFee, exitFeePercent, esgDiscount,
+            monthlyInterest, totalInterest, prepaidInterest,
+            servicedNet, retainedNet, term
+          };
+        };
+
+        // Loan override - if user specified a specific amount, use that
+        const loanOverride = parseInt(data.loanOverride) || 0;
+
+        // Build quotes - use override if specified, otherwise max
+        const quoteStandard = data.loanPurpose === 'mortgage' && mortgageStandard?.loan > 0
+          ? buildQuote(loanOverride > 0 ? Math.min(loanOverride, mortgageStandard.loan) : mortgageStandard.loan, false, false)
+          : null;
+        const quotePro = data.loanPurpose === 'mortgage' && mortgagePro?.loan > 0
+          ? buildQuote(loanOverride > 0 ? Math.min(loanOverride, mortgagePro.loan) : mortgagePro.loan, true, false)
+          : null;
+        const quoteBridge = data.loanPurpose === 'bridge'
+          ? buildQuote(loanOverride > 0 ? Math.min(loanOverride, bridgeMaxLoan) : bridgeMaxLoan, false, true)
+          : null;
+
+        // ===== CORE PLUS QUOTE =====
+        // Core Plus: rate is % pcm, no Base rate addition
+        const buildCorePlusQuote = () => {
+          if (valuation <= 0) return null;
+
+          // Use override if specified, otherwise max
+          const grossLoan = loanOverride > 0 ? Math.min(loanOverride, corePlusMaxLtvLoan) : corePlusMaxLtvLoan;
+          const ltv = (grossLoan / valuation) * 100;
+          const baseRatePcm = getCorePlusRate(ltv);
+          if (baseRatePcm === null) return null;
+
+          // Apply rate loading
+          const ratePcm = baseRatePcm + corePlusRateLoading;
+          const rateAnnual = ratePcm * 12; // Convert to annual for display
+
+          // Fees (same structure as bridge)
+          const arrangementFee = grossLoan * (config.fees.bridge.arrangement / 100);
+          const adminFee = config.fees.adminBase + Math.max(0, data.numProperties - 1) * config.fees.adminPerProperty;
+          const valuationFee = config.fees.valuation;
+
+          // Interest calculation
+          const monthlyInterest = grossLoan * (ratePcm / 100);
+          const totalInterest = monthlyInterest * term;
+
+          // Net advances
+          const servicedDeductions = arrangementFee + adminFee + valuationFee;
+          const servicedNet = grossLoan - servicedDeductions;
+
+          const retainedDeductions = arrangementFee + adminFee + valuationFee + totalInterest;
+          const retainedNet = grossLoan - retainedDeductions;
+
+          return {
+            grossLoan, ltv,
+            ratePcm, baseRatePcm, rateLoading: corePlusRateLoading, rateAnnual,
+            arrangementFee, adminFee, valuationFee,
+            monthlyInterest, totalInterest,
+            servicedNet, retainedNet, term,
+            isSecondCharge,
+            needsReferral: corePlusNeedsReferral || baseRatePcm === null,
+            hasLightRefurbLoading: data.corePlusLoading?.lightRefurb || false,
+            hasHeavyRefurbLoading: data.corePlusLoading?.heavyRefurb || false,
+            hasAdverseLoading: data.corePlusLoading?.adverse || false,
+            hasOffshoreLoading: data.corePlusLoading?.offshore || false,
+            hasCharityLoading: data.corePlusLoading?.charity || false,
+          };
+        };
+
+        const quoteCorePlus = data.loanPurpose === 'corePlus' ? buildCorePlusQuote() : null;
+
+        return {
+          valuation,
+          rent,
+          maxLtvPercent,
+          maxLtvLoan,
+          term,
+
+          // Mortgage calculations
+          mortgageStandard,
+          mortgagePro,
+          proAdvantage,
+
+          // Rent required
+          rentForMaxStandard,
+          rentForMaxPro,
+          rentSaving,
+
+          // Bridge
+          bridgePayRate,
+          bridgeMaxLtv,
+          bridgeMaxLoan,
+
+          // Core Plus
+          corePlusMaxLtv,
+          corePlusMaxLtvLoan,
+          corePlusRateLoading,
+          corePlusNeedsReferral,
+          isSecondCharge,
+
+          // Loan override
+          loanOverride,
+
+          // Full quotes
+          quoteStandard,
+          quotePro,
+          quoteBridge,
+          quoteCorePlus,
+
+          // Config refs
+          icrRequired,
+          stressAddOn,
+          prepaidRate,
+        };
+      }, [data, config]);
+
+      // Debug output
+      useEffect(() => {
+        if (calculations.mortgageStandard && calculations.mortgagePro) {
+          console.log('=== COMPARISON ===');
+          console.log('Standard Max Loan:', calculations.mortgageStandard.loan, 'Limited by:', calculations.mortgageStandard.limited);
+          console.log('Pro Max Loan:', calculations.mortgagePro.loan, 'Limited by:', calculations.mortgagePro.limited);
+          console.log('Pro Advantage:', calculations.proAdvantage);
+        }
+      }, [calculations]);
+
+      // Section statuses
+      const getStatus = (section) => {
+        switch(section) {
+          case 'location': return data.location ? (config.locations.rejected.some(l => l.value === data.location) ? 'error' : 'complete') : (openSection === 'location' ? 'active' : 'pending');
+          case 'property': return data.propertyType ? 'complete' : (openSection === 'property' ? 'active' : 'pending');
+          case 'valuation': return data.valuation && parseFloat(data.valuation) >= config.limits.minPropertyValue ? 'complete' : (openSection === 'valuation' ? 'active' : 'pending');
+          case 'product': return data.loanPurpose ? 'complete' : (openSection === 'product' ? 'active' : 'pending');
+          case 'rental':
+            if (!data.rentMode) return openSection === 'rental' ? 'active' : 'pending';
+            if (data.rentMode === 'know_rent' && (!data.rent || parseFloat(data.rent) <= 0)) return openSection === 'rental' ? 'active' : 'pending';
+            return 'complete';
+          case 'borrower': return data.borrowerType ? 'complete' : (openSection === 'borrower' ? 'active' : 'pending');
+          case 'credit': return data.creditClean === true ? 'complete' : data.creditClean === false ? 'error' : (openSection === 'credit' ? 'active' : 'pending');
+          case 'terms': return data.termMonths ? 'complete' : (openSection === 'terms' ? 'active' : 'pending');
+          case 'result': return openSection === 'result' ? 'active' : 'pending';
+          default: return 'pending';
+        }
+      };
+
+      const isEligible = () => {
+        const base = getStatus('location') === 'complete' && getStatus('property') === 'complete' && getStatus('valuation') === 'complete' && getStatus('product') === 'complete' && getStatus('borrower') === 'complete' && getStatus('credit') === 'complete' && getStatus('terms') === 'complete';
+        if (data.loanPurpose === 'mortgage') return base && getStatus('rental') === 'complete';
+        return base;
+      };
+
+      return (
+        <div style={{ minHeight: '100vh', background: colors.cream }}>
+          {/* Header */}
+          <header style={{ background: colors.orange, padding: '16px 20px', position: 'sticky', top: 0, zIndex: 100 }}>
+            <div style={{ maxWidth: '600px', margin: '0 auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: '40px', height: '40px', background: colors.white, borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '700', color: colors.orange }}>TAB</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '18px', fontWeight: '700', color: colors.white }}>Loan Calculator</div>
+                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.8)' }}>v17 • BoE {config.boeBaseRate}%</div>
+              </div>
+              <button onClick={() => setShowAdmin(!showAdmin)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', padding: '8px 12px', borderRadius: '8px', color: colors.white, fontSize: '12px', cursor: 'pointer' }}>⚙️</button>
+            </div>
+          </header>
+
+          {/* Admin Panel */}
+          {showAdmin && (
+            <div style={{ background: colors.dark, padding: '20px', color: colors.white }}>
+              <div style={{ maxWidth: '600px', margin: '0 auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                  <h3 style={{ margin: 0 }}>⚙️ Admin Settings</h3>
+                  <button onClick={() => setShowAdmin(false)} style={{ background: colors.orange, border: 'none', padding: '8px 16px', borderRadius: '6px', color: colors.white, cursor: 'pointer' }}>Close</button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  {/* Base Rate */}
+                  <div>
+                    <label style={{ fontSize: '12px', color: colors.greyLight }}>BoE Base Rate (%)</label>
+                    <input type="number" step="0.25" value={config.boeBaseRate} onChange={e => { const newConfig = { ...config, boeBaseRate: parseFloat(e.target.value) || 0 }; setConfig(newConfig); saveConfig(newConfig); }} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: 'none', marginTop: '4px' }} />
+                  </div>
+
+                  {/* ICR Required */}
+                  <div>
+                    <label style={{ fontSize: '12px', color: colors.greyLight }}>ICR Required (x)</label>
+                    <input type="number" step="0.05" value={config.icr.required} onChange={e => { const newConfig = { ...config, icr: { ...config.icr, required: parseFloat(e.target.value) || 1.25 } }; setConfig(newConfig); saveConfig(newConfig); }} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: 'none', marginTop: '4px' }} />
+                  </div>
+
+                  {/* Stress Add-on */}
+                  <div>
+                    <label style={{ fontSize: '12px', color: colors.greyLight }}>Stress Add-on (%)</label>
+                    <input type="number" step="0.25" value={config.icr.stressAddOn} onChange={e => { const newConfig = { ...config, icr: { ...config.icr, stressAddOn: parseFloat(e.target.value) || 1 } }; setConfig(newConfig); saveConfig(newConfig); }} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: 'none', marginTop: '4px' }} />
+                  </div>
+
+                  {/* Prepaid Interest */}
+                  <div>
+                    <label style={{ fontSize: '12px', color: colors.greyLight }}>Pro Prepaid Interest (%)</label>
+                    <input type="number" step="0.25" value={config.mortgagePro.prepaidInterestRate} onChange={e => { const newConfig = { ...config, mortgagePro: { ...config.mortgagePro, prepaidInterestRate: parseFloat(e.target.value) || 2 } }; setConfig(newConfig); saveConfig(newConfig); }} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: 'none', marginTop: '4px' }} />
+                  </div>
+
+                  {/* Admin Fee Standard */}
+                  <div>
+                    <label style={{ fontSize: '12px', color: colors.greyLight }}>Admin Fee (Standard)</label>
+                    <input type="number" step="100" value={config.fees.adminBase} onChange={e => { const newConfig = { ...config, fees: { ...config.fees, adminBase: parseInt(e.target.value) || 1000 } }; setConfig(newConfig); saveConfig(newConfig); }} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: 'none', marginTop: '4px' }} />
+                  </div>
+
+                  {/* Admin Fee Pro */}
+                  <div>
+                    <label style={{ fontSize: '12px', color: colors.greyLight }}>Admin Fee (Pro)</label>
+                    <input type="number" step="100" value={config.fees.adminBasePro} onChange={e => { const newConfig = { ...config, fees: { ...config.fees, adminBasePro: parseInt(e.target.value) || 2500 } }; setConfig(newConfig); saveConfig(newConfig); }} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: 'none', marginTop: '4px' }} />
+                  </div>
+
+                  {/* Arrangement Fee */}
+                  <div>
+                    <label style={{ fontSize: '12px', color: colors.greyLight }}>Arrangement Fee (%)</label>
+                    <input type="number" step="0.25" value={config.fees.mortgage.arrangement} onChange={e => { const newConfig = { ...config, fees: { ...config.fees, mortgage: { ...config.fees.mortgage, arrangement: parseFloat(e.target.value) || 2 } } }; setConfig(newConfig); saveConfig(newConfig); }} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: 'none', marginTop: '4px' }} />
+                  </div>
+
+                  {/* Exit Fee */}
+                  <div>
+                    <label style={{ fontSize: '12px', color: colors.greyLight }}>Exit Fee (%)</label>
+                    <input type="number" step="0.25" value={config.fees.mortgage.exit} onChange={e => { const newConfig = { ...config, fees: { ...config.fees, mortgage: { ...config.fees.mortgage, exit: parseFloat(e.target.value) || 2 } } }; setConfig(newConfig); saveConfig(newConfig); }} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: 'none', marginTop: '4px' }} />
+                  </div>
+                </div>
+
+                {/* Reset Button */}
+                <button onClick={() => { localStorage.removeItem('tabCalcV17'); setConfig(defaultConfig); }} style={{ marginTop: '20px', padding: '10px 20px', background: colors.red, color: colors.white, border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Reset to Defaults</button>
+              </div>
+            </div>
+          )}
+
+          <main style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
+
+            {/* Brain Dump - Paste broker enquiry */}
+            <Section
+              title="🧠 Brain Dump"
+              subtitle={parsed ? 'Review what I found' : 'Paste enquiry or describe case'}
+              status={parsed ? 'complete' : 'active'}
+              isOpen={openSection === 'enquiry'}
+              onToggle={() => setOpenSection(openSection === 'enquiry' ? null : 'enquiry')}
+              scrollRef={sectionRefs.enquiry}
+            >
+              <div style={{ marginBottom: '16px' }}>
+                <textarea
+                  value={freeText}
+                  onChange={e => { setFreeText(e.target.value); setParsed(null); }}
+                  placeholder="Paste the broker enquiry email or describe the case in your own words...
+
+Examples:
+• BTL in Manchester, worth £450k, 5 year mortgage, rent £2,200 pcm, Ltd company
+• HMO in SE15 2AA, 6 beds at £650 each, valued 800k, individual borrower
+• Bridge needed - warehouse in Leeds, purchase price £1.2m, 12 months
+• Client wants to raise £300k against BTL in Bristol worth £500k, 70% LTV"
+                  style={{
+                    width: '100%',
+                    minHeight: '140px',
+                    padding: '16px',
+                    fontSize: '14px',
+                    border: `2px solid ${colors.creamDark}`,
+                    borderRadius: '10px',
+                    outline: 'none',
+                    resize: 'vertical',
+                    fontFamily: 'inherit',
+                    lineHeight: 1.6,
+                  }}
+                  onFocus={e => e.target.style.borderColor = colors.orange}
+                  onBlur={e => e.target.style.borderColor = colors.creamDark}
+                />
+              </div>
+
+              {/* Parse Button */}
+              <button
+                onClick={handleParseText}
+                disabled={!freeText.trim()}
+                style={{
+                  width: '100%',
+                  padding: '14px',
+                  fontSize: '15px',
+                  fontWeight: '600',
+                  background: freeText.trim() ? colors.orange : colors.creamDark,
+                  color: freeText.trim() ? colors.white : colors.grey,
+                  border: 'none',
+                  borderRadius: '10px',
+                  cursor: freeText.trim() ? 'pointer' : 'not-allowed',
+                }}
+              >
+                🔍 Extract Details
+              </button>
+
+              {/* Feedback Panel - shows after parsing */}
+              {parsed && (
+                <div style={{ marginTop: '20px', background: colors.cream, borderRadius: '12px', padding: '16px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: '600', color: colors.dark, marginBottom: '12px' }}>
+                    📋 What I Found:
+                  </div>
+
+                  {/* Extracted fields */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px' }}>
+                    {/* Location */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ color: parsed.location ? colors.green : colors.amber }}>
+                        {parsed.location ? '✓' : '?'}
+                      </span>
+                      <span style={{ color: colors.grey, minWidth: '80px' }}>Location:</span>
+                      <span style={{ fontWeight: '500' }}>
+                        {parsed.location
+                          ? `${parsed.locationMatch || parsed.location} → ${config.locations.accepted.find(l => l.value === parsed.location)?.label || parsed.location}`
+                          : 'Not detected'}
+                      </span>
+                    </div>
+
+                    {/* Property Type */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ color: parsed.propertyType ? colors.green : colors.amber }}>
+                        {parsed.propertyType ? '✓' : '?'}
+                      </span>
+                      <span style={{ color: colors.grey, minWidth: '80px' }}>Property:</span>
+                      <span style={{ fontWeight: '500' }}>
+                        {parsed.propertyType
+                          ? `"${parsed.propertyMatch}" → ${parsed.propertyCategory}`
+                          : 'Not detected'}
+                      </span>
+                    </div>
+
+                    {/* Valuation */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ color: parsed.valuation ? colors.green : colors.amber }}>
+                        {parsed.valuation ? '✓' : '?'}
+                      </span>
+                      <span style={{ color: colors.grey, minWidth: '80px' }}>Value:</span>
+                      <span style={{ fontWeight: '500' }}>
+                        {parsed.valuation
+                          ? `"${parsed.valuationMatch}" → ${fmt.currency(parsed.valuation)}${parsed.valuationType ? ` (${parsed.valuationType})` : ''}`
+                          : 'Not detected'}
+                      </span>
+                    </div>
+
+                    {/* Rent */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ color: parsed.rent ? colors.green : (parsed.loanPurpose === 'mortgage' ? colors.amber : colors.greyLight) }}>
+                        {parsed.rent ? '✓' : (parsed.loanPurpose === 'mortgage' ? '?' : '○')}
+                      </span>
+                      <span style={{ color: colors.grey, minWidth: '80px' }}>Rent:</span>
+                      <span style={{ fontWeight: '500' }}>
+                        {parsed.rent
+                          ? `"${parsed.rentMatch}" → ${fmt.currency(parsed.rent)}/mo${parsed.rentIsAnnual ? ' (converted from annual)' : ''}`
+                          : (parsed.loanPurpose === 'mortgage' ? 'Needed for mortgage' : 'N/A for bridge')}
+                      </span>
+                    </div>
+
+                    {/* Product */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ color: parsed.loanPurpose ? colors.green : colors.amber }}>
+                        {parsed.loanPurpose ? '✓' : '?'}
+                      </span>
+                      <span style={{ color: colors.grey, minWidth: '80px' }}>Product:</span>
+                      <span style={{ fontWeight: '500' }}>
+                        {parsed.loanPurpose
+                          ? `${parsed.purposeMatch ? `"${parsed.purposeMatch}" → ` : ''}${parsed.loanPurpose === 'bridge' ? 'Bridge' : 'Mortgage'}${parsed.confidence.loanPurpose === 'inferred' ? ' (inferred from term)' : ''}`
+                          : 'Not detected'}
+                      </span>
+                    </div>
+
+                    {/* Term */}
+                    {parsed.termMonths && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ color: colors.green }}>✓</span>
+                        <span style={{ color: colors.grey, minWidth: '80px' }}>Term:</span>
+                        <span style={{ fontWeight: '500' }}>
+                          "{parsed.termMatch}" → {parsed.termMonths} months ({Math.round(parsed.termMonths/12)} years)
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Borrower */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ color: parsed.borrowerType ? colors.green : colors.amber }}>
+                        {parsed.borrowerType ? '✓' : '?'}
+                      </span>
+                      <span style={{ color: colors.grey, minWidth: '80px' }}>Borrower:</span>
+                      <span style={{ fontWeight: '500' }}>
+                        {parsed.borrowerType
+                          ? `"${parsed.borrowerMatch}" → ${config.borrowerTypes.find(b => b.value === parsed.borrowerType)?.label || parsed.borrowerType}`
+                          : 'Not detected'}
+                      </span>
+                    </div>
+
+                    {/* LTV if detected */}
+                    {parsed.ltv && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ color: colors.purple }}>ℹ</span>
+                        <span style={{ color: colors.grey, minWidth: '80px' }}>LTV:</span>
+                        <span style={{ fontWeight: '500' }}>
+                          "{parsed.ltvMatch}" → Client wants {parsed.ltv}% LTV
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Loan amount if detected */}
+                    {parsed.loanAmount && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ color: colors.purple }}>ℹ</span>
+                        <span style={{ color: colors.grey, minWidth: '80px' }}>Loan:</span>
+                        <span style={{ fontWeight: '500' }}>
+                          "{parsed.loanAmountMatch}" → wants {fmt.currency(parsed.loanAmount)}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Postcode/Address */}
+                    {parsed.address && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ color: colors.green }}>✓</span>
+                        <span style={{ color: colors.grey, minWidth: '80px' }}>Postcode:</span>
+                        <span style={{ fontWeight: '500' }}>{parsed.address}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Warnings */}
+                  {parsed.warnings.length > 0 && (
+                    <div style={{ marginTop: '12px', padding: '10px', background: '#FEF3C7', borderRadius: '8px', border: `1px solid ${colors.amber}` }}>
+                      {parsed.warnings.map((w, i) => (
+                        <div key={i} style={{ fontSize: '12px', color: '#92400E', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span>⚠️</span> {w}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Questions */}
+                  {parsed.questions.length > 0 && (
+                    <div style={{ marginTop: '12px', padding: '10px', background: '#EDE9FE', borderRadius: '8px', border: `1px solid ${colors.purple}` }}>
+                      <div style={{ fontSize: '11px', fontWeight: '600', color: colors.purple, marginBottom: '6px' }}>Still need to know:</div>
+                      {parsed.questions.map((q, i) => (
+                        <div key={i} style={{ fontSize: '12px', color: colors.purple }}>• {q}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Continue Button */}
+                  <button
+                    onClick={() => nextSection('enquiry')}
+                    style={{
+                      width: '100%',
+                      padding: '14px',
+                      fontSize: '15px',
+                      fontWeight: '600',
+                      background: colors.green,
+                      color: colors.white,
+                      border: 'none',
+                      borderRadius: '10px',
+                      cursor: 'pointer',
+                      marginTop: '16px',
+                    }}
+                  >
+                    Continue & Complete Details →
+                  </button>
+                </div>
+              )}
+
+              {/* Skip Button - only show if not parsed yet */}
+              {!parsed && (
+                <button
+                  onClick={() => nextSection('enquiry')}
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    fontSize: '15px',
+                    fontWeight: '500',
+                    background: 'transparent',
+                    color: colors.grey,
+                    border: `1px solid ${colors.creamDark}`,
+                    borderRadius: '10px',
+                    cursor: 'pointer',
+                    marginTop: '8px',
+                  }}
+                >
+                  Skip - enter manually
+                </button>
+              )}
+            </Section>
+
+            {/* 1. Location */}
+            <Section title="1. Location" subtitle={data.location ? config.locations.accepted.concat(config.locations.rejected).find(l => l.value === data.location)?.label : 'Where is the property?'} status={getStatus('location')} isOpen={openSection === 'location'} onToggle={() => setOpenSection(openSection === 'location' ? null : 'location')} scrollRef={sectionRefs.location}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {config.locations.accepted.map(loc => (
+                  <OptionButton key={loc.value} selected={data.location === loc.value} onClick={() => { updateData('location', loc.value); nextSection('location'); }} small>✓ {loc.label}</OptionButton>
+                ))}
+                <div style={{ height: '8px' }} />
+                {config.locations.rejected.map(loc => (
+                  <OptionButton key={loc.value} selected={data.location === loc.value} onClick={() => updateData('location', loc.value)} variant="danger" small>✗ {loc.label}</OptionButton>
+                ))}
+              </div>
+              {config.locations.rejected.some(l => l.value === data.location) && (
+                <div style={{ marginTop: '16px', padding: '14px', background: '#FEF2F2', borderRadius: '10px', border: `1px solid ${colors.red}` }}>
+                  <div style={{ color: colors.red, fontWeight: '600' }}>⚠️ Out of Policy</div>
+                  <div style={{ fontSize: '13px', color: colors.grey, marginTop: '4px' }}>TAB does not lend in this location. Cannot proceed.</div>
+                </div>
+              )}
+            </Section>
+
+            {/* 2. Property */}
+            <Section title="2. Property Type" subtitle={data.propertyType ? config.propertyTypes.residential.concat(config.propertyTypes.commercial).find(p => p.value === data.propertyType)?.label : 'What type?'} status={getStatus('property')} isOpen={openSection === 'property'} onToggle={() => setOpenSection(openSection === 'property' ? null : 'property')} scrollRef={sectionRefs.property}>
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontSize: '12px', fontWeight: '600', color: colors.green, marginBottom: '8px' }}>RESIDENTIAL</div>
+                {config.propertyTypes.residential.map(t => (
+                  <div key={t.value} style={{ marginBottom: '6px' }}><OptionButton selected={data.propertyType === t.value} onClick={() => { updateData('propertyType', t.value); updateData('propertyCategory', 'residential'); nextSection('property'); }} small>{t.label}</OptionButton></div>
+                ))}
+              </div>
+              <div>
+                <div style={{ fontSize: '12px', fontWeight: '600', color: colors.orange, marginBottom: '8px' }}>COMMERCIAL</div>
+                {config.propertyTypes.commercial.map(t => (
+                  <div key={t.value} style={{ marginBottom: '6px' }}><OptionButton selected={data.propertyType === t.value} onClick={() => { updateData('propertyType', t.value); updateData('propertyCategory', 'commercial'); nextSection('property'); }} small>{t.label}</OptionButton></div>
+                ))}
+              </div>
+            </Section>
+
+            {/* 3. Valuation */}
+            <Section title="3. Valuation" subtitle={data.valuation ? fmt.currency(parseFloat(data.valuation)) : 'Property value'} status={getStatus('valuation')} isOpen={openSection === 'valuation'} onToggle={() => setOpenSection(openSection === 'valuation' ? null : 'valuation')} scrollRef={sectionRefs.valuation}>
+              <InputField label="Property Value" prefix="£" value={data.valuation} onChange={v => updateData('valuation', v)} placeholder="e.g. 500000" type="number" />
+              <InputField label="Address / Postcode" value={data.address} onChange={v => updateData('address', v)} placeholder="e.g. SW1A 1AA" />
+
+              {/* Property value limit check */}
+              {(() => {
+                const val = parseFloat(data.valuation) || 0;
+                const isLondon = data.location === 'london';
+                const isCommercial = data.propertyCategory === 'commercial';
+                const maxVal = isLondon
+                  ? (isCommercial ? config.maxPropertyValue.london.commercial : config.maxPropertyValue.london.residential)
+                  : (isCommercial ? config.maxPropertyValue.other.commercial : config.maxPropertyValue.other.residential);
+                const overLimit = val > maxVal;
+
+                return overLimit ? (
+                  <div style={{ padding: '14px', background: '#FEF3C7', borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.amber}` }}>
+                    <div style={{ color: '#92400E', fontWeight: '600' }}>⚠️ Above Standard Limit</div>
+                    <div style={{ fontSize: '13px', color: colors.grey, marginTop: '4px' }}>
+                      Max {isCommercial ? 'commercial' : 'residential'} value for {isLondon ? 'London' : 'this location'}: {fmt.currency(maxVal)}. May require referral.
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+
+              {parseFloat(data.valuation) >= config.limits.minPropertyValue && (
+                <div style={{ padding: '16px', background: colors.cream, borderRadius: '10px', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <span style={{ color: colors.grey }}>Max LTV</span>
+                    <span style={{ fontWeight: '600' }}>{calculations.maxLtvPercent}%</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: colors.grey }}>Max Loan (LTV)</span>
+                    <span style={{ fontWeight: '600', color: colors.green }}>{fmt.currency(calculations.maxLtvLoan)}</span>
+                  </div>
+                </div>
+              )}
+
+              {parseFloat(data.valuation) >= config.limits.minPropertyValue && (
+                <button onClick={() => nextSection('valuation')} style={{ width: '100%', padding: '14px', background: colors.orange, color: colors.white, border: 'none', borderRadius: '10px', fontSize: '15px', fontWeight: '600', cursor: 'pointer' }}>Continue →</button>
+              )}
+            </Section>
+
+            {/* 4. Product - MOVED UP */}
+            <Section title="4. Product" subtitle={data.loanPurpose === 'bridge' ? 'TAB Bridge (Core)' : data.loanPurpose === 'corePlus' ? 'TAB Bridge (Core Plus)' : data.loanPurpose === 'mortgage' ? 'TAB Mortgage' : 'Select product'} status={getStatus('product')} isOpen={openSection === 'product'} onToggle={() => setOpenSection(openSection === 'product' ? null : 'product')} scrollRef={sectionRefs.product}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <OptionButton selected={data.loanPurpose === 'bridge'} onClick={() => { updateData('loanPurpose', 'bridge'); updateData('termMonths', '12'); nextSection('product'); }}>
+                  <div style={{ fontWeight: '600', color: colors.orange, marginBottom: '4px' }}>TAB Bridge (Core)</div>
+                  <div style={{ fontSize: '12px', color: colors.grey }}>1-24 months • Rate = Margin + Base • No exit fee</div>
+                </OptionButton>
+                <OptionButton selected={data.loanPurpose === 'corePlus'} onClick={() => { updateData('loanPurpose', 'corePlus'); updateData('termMonths', '12'); setOpenSection('corePlusOptions'); }}>
+                  <div style={{ fontWeight: '600', color: colors.teal, marginBottom: '4px' }}>TAB Bridge (Core Plus)</div>
+                  <div style={{ fontSize: '12px', color: colors.grey }}>1-24 months • Rate = % pcm • For works/complex deals</div>
+                </OptionButton>
+                <OptionButton selected={data.loanPurpose === 'mortgage'} onClick={() => { updateData('loanPurpose', 'mortgage'); updateData('termMonths', '36'); nextSection('product'); }}>
+                  <div style={{ fontWeight: '600', color: colors.green, marginBottom: '4px' }}>TAB Mortgage</div>
+                  <div style={{ fontSize: '12px', color: colors.grey }}>3-5 years • ICR tested • Compares Standard vs Pro</div>
+                </OptionButton>
+              </div>
+            </Section>
+
+            {/* 4b. Core Plus Options - ONLY FOR CORE PLUS */}
+            {data.loanPurpose === 'corePlus' && (
+              <Section title="4b. Core Plus Options" subtitle={data.corePlusCharge === 'second' ? '2nd Charge' : '1st Charge'} status={data.loanPurpose === 'corePlus' ? 'complete' : 'pending'} isOpen={openSection === 'corePlusOptions'} onToggle={() => setOpenSection(openSection === 'corePlusOptions' ? null : 'corePlusOptions')} scrollRef={sectionRefs.product}>
+                {/* Charge Type Selection */}
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: '600', color: colors.grey, marginBottom: '10px' }}>CHARGE TYPE</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <button onClick={() => updateData('corePlusCharge', 'first')} style={{ padding: '14px', borderRadius: '10px', border: `2px solid ${data.corePlusCharge === 'first' ? colors.teal : colors.creamDark}`, background: data.corePlusCharge === 'first' ? '#F0FDFA' : colors.white, cursor: 'pointer', textAlign: 'center' }}>
+                      <div style={{ fontWeight: '600' }}>1st Charge</div>
+                      <div style={{ fontSize: '11px', color: colors.grey }}>Max {data.propertyCategory === 'commercial' ? '65' : '70'}% LTV</div>
+                    </button>
+                    <button onClick={() => updateData('corePlusCharge', 'second')} style={{ padding: '14px', borderRadius: '10px', border: `2px solid ${data.corePlusCharge === 'second' ? colors.purple : colors.creamDark}`, background: data.corePlusCharge === 'second' ? '#EDE9FE' : colors.white, cursor: 'pointer', textAlign: 'center' }}>
+                      <div style={{ fontWeight: '600' }}>2nd Charge</div>
+                      <div style={{ fontSize: '11px', color: colors.grey }}>Max 65% combined LTV</div>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2nd Charge Balance Input */}
+                {data.corePlusCharge === 'second' && (
+                  <div style={{ marginBottom: '20px', padding: '14px', background: '#EDE9FE', borderRadius: '10px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: colors.purple, marginBottom: '8px' }}>EXISTING 1ST CHARGE BALANCE</div>
+                    <InputField label="" prefix="£" value={data.corePlusFirstChargeBalance} onChange={v => updateData('corePlusFirstChargeBalance', v)} placeholder="e.g. 200000" type="number" />
+                    <div style={{ fontSize: '11px', color: colors.grey, marginTop: '4px' }}>
+                      Combined LTV = (1st charge + 2nd charge) ÷ property value
+                    </div>
+                  </div>
+                )}
+
+                {/* Rate Loading */}
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: '600', color: colors.grey, marginBottom: '10px' }}>RATE LOADING (optional)</div>
+                  <div style={{ fontSize: '12px', color: colors.grey, marginBottom: '12px' }}>
+                    Rate loading adds to the base pcm rate. Select any that apply:
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {/* Light Refurb */}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: data.corePlusLoading?.lightRefurb ? '#F0FDFA' : colors.white, borderRadius: '8px', border: `2px solid ${data.corePlusLoading?.lightRefurb ? colors.teal : colors.creamDark}`, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={data.corePlusLoading?.lightRefurb || false} onChange={e => updateData('corePlusLoading', { ...data.corePlusLoading, lightRefurb: e.target.checked, heavyRefurb: e.target.checked ? false : data.corePlusLoading?.heavyRefurb })} style={{ width: '18px', height: '18px', accentColor: colors.teal }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: '600', fontSize: '13px' }}>Light Refurb (&lt;10% OMV)</div>
+                      </div>
+                      <div style={{ fontSize: '12px', color: colors.teal, fontWeight: '600' }}>+0.10%</div>
+                    </label>
+                    {/* Heavy Refurb */}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: data.corePlusLoading?.heavyRefurb ? '#FEF3C7' : colors.white, borderRadius: '8px', border: `2px solid ${data.corePlusLoading?.heavyRefurb ? colors.amber : colors.creamDark}`, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={data.corePlusLoading?.heavyRefurb || false} onChange={e => updateData('corePlusLoading', { ...data.corePlusLoading, heavyRefurb: e.target.checked, lightRefurb: e.target.checked ? false : data.corePlusLoading?.lightRefurb })} style={{ width: '18px', height: '18px', accentColor: colors.amber }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: '600', fontSize: '13px' }}>Heavy Refurb (&gt;10% OMV)</div>
+                      </div>
+                      <div style={{ fontSize: '12px', color: colors.amber, fontWeight: '600' }}>+0.20%</div>
+                    </label>
+                    {/* Adverse Credit */}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: data.corePlusLoading?.adverse ? '#FEF2F2' : colors.white, borderRadius: '8px', border: `2px solid ${data.corePlusLoading?.adverse ? colors.red : colors.creamDark}`, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={data.corePlusLoading?.adverse || false} onChange={e => updateData('corePlusLoading', { ...data.corePlusLoading, adverse: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: colors.red }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: '600', fontSize: '13px' }}>Adverse Credit</div>
+                      </div>
+                      <div style={{ fontSize: '12px', color: colors.red, fontWeight: '600' }}>+0.10%</div>
+                    </label>
+                    {/* Complex Offshore */}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: data.corePlusLoading?.offshore ? '#EDE9FE' : colors.white, borderRadius: '8px', border: `2px solid ${data.corePlusLoading?.offshore ? colors.purple : colors.creamDark}`, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={data.corePlusLoading?.offshore || false} onChange={e => updateData('corePlusLoading', { ...data.corePlusLoading, offshore: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: colors.purple }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: '600', fontSize: '13px' }}>Complex Offshore</div>
+                      </div>
+                      <div style={{ fontSize: '12px', color: colors.purple, fontWeight: '600' }}>+0.10%</div>
+                    </label>
+                    {/* Charity */}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: data.corePlusLoading?.charity ? '#F0FDF4' : colors.white, borderRadius: '8px', border: `2px solid ${data.corePlusLoading?.charity ? colors.green : colors.creamDark}`, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={data.corePlusLoading?.charity || false} onChange={e => updateData('corePlusLoading', { ...data.corePlusLoading, charity: e.target.checked })} style={{ width: '18px', height: '18px', accentColor: colors.green }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: '600', fontSize: '13px' }}>Charity Borrower</div>
+                      </div>
+                      <div style={{ fontSize: '12px', color: colors.green, fontWeight: '600' }}>+0.10%</div>
+                    </label>
+                  </div>
+                </div>
+                <button onClick={() => nextSection('product')} style={{ width: '100%', padding: '14px', background: colors.teal, color: colors.white, border: 'none', borderRadius: '10px', fontSize: '15px', fontWeight: '600', cursor: 'pointer' }}>Continue →</button>
+              </Section>
+            )}
+
+            {/* 5. Rental & Max Borrowing - ONLY FOR MORTGAGE */}
+            {data.loanPurpose === 'mortgage' && (
+              <Section title="5. Rental & Max Borrowing" subtitle={data.rent ? `${fmt.currency(parseFloat(data.rent))}/mo` : 'ICR calculation'} status={getStatus('rental')} isOpen={openSection === 'rental'} onToggle={() => setOpenSection(openSection === 'rental' ? null : 'rental')} scrollRef={sectionRefs.rental}>
+
+                {/* Mode buttons */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+                  <button onClick={() => updateData('rentMode', 'know_rent')} style={{ padding: '20px 16px', borderRadius: '12px', border: `2px solid ${data.rentMode === 'know_rent' ? colors.green : colors.creamDark}`, background: data.rentMode === 'know_rent' ? '#F0FDF4' : colors.white, cursor: 'pointer', textAlign: 'center' }}>
+                    <div style={{ fontSize: '24px', marginBottom: '8px' }}>💰</div>
+                    <div style={{ fontSize: '13px', fontWeight: '600' }}>I Know The Rent</div>
+                    <div style={{ fontSize: '11px', color: colors.grey }}>Show max loan</div>
+                  </button>
+                  <button onClick={() => updateData('rentMode', 'want_max')} style={{ padding: '20px 16px', borderRadius: '12px', border: `2px solid ${data.rentMode === 'want_max' ? colors.purple : colors.creamDark}`, background: data.rentMode === 'want_max' ? '#EDE9FE' : colors.white, cursor: 'pointer', textAlign: 'center' }}>
+                    <div style={{ fontSize: '24px', marginBottom: '8px' }}>🎯</div>
+                    <div style={{ fontSize: '13px', fontWeight: '600' }}>I Want Max LTV</div>
+                    <div style={{ fontSize: '11px', color: colors.grey }}>Show rent needed</div>
+                  </button>
+                </div>
+
+                {/* I KNOW THE RENT */}
+                {data.rentMode === 'know_rent' && (
+                  <>
+                    <InputField label="Monthly Rent (Gross)" prefix="£" value={data.rent} onChange={v => updateData('rent', v)} placeholder="e.g. 2500" type="number" />
+
+                    {data.rent && parseFloat(data.rent) > 0 && (
+                      <>
+                        <div style={{ fontSize: '13px', fontWeight: '600', color: colors.grey, marginBottom: '12px', marginTop: '8px' }}>MAXIMUM YOU CAN BORROW</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                          {/* Standard */}
+                          <div style={{ padding: '16px', background: colors.white, borderRadius: '12px', border: `2px solid ${colors.green}` }}>
+                            <div style={{ fontSize: '11px', fontWeight: '600', color: colors.green, marginBottom: '8px' }}>TAB MORTGAGE</div>
+                            <div style={{ fontSize: '22px', fontWeight: '700' }}>
+                              {calculations.mortgageStandard?.loan > 0 ? fmt.currency(calculations.mortgageStandard.loan) : '—'}
+                            </div>
+                            <div style={{ fontSize: '11px', color: colors.grey, marginTop: '6px' }}>
+                              {calculations.mortgageStandard?.limited === 'ltv' ? '📊 LTV limited' :
+                               calculations.mortgageStandard?.limited === 'icr' ? '📉 ICR limited' :
+                               '❌ Rent too low'}
+                            </div>
+                            <div style={{ fontSize: '10px', color: colors.grey, marginTop: '4px' }}>
+                              Stress: {fmt.percent(calculations.mortgageStandard?.stressRate || 0)}
+                            </div>
+                          </div>
+                          {/* Pro */}
+                          <div style={{ padding: '16px', background: colors.white, borderRadius: '12px', border: `2px solid ${colors.purple}` }}>
+                            <div style={{ fontSize: '11px', fontWeight: '600', color: colors.purple, marginBottom: '8px' }}>MORTGAGE PRO</div>
+                            <div style={{ fontSize: '22px', fontWeight: '700' }}>
+                              {calculations.mortgagePro?.loan > 0 ? fmt.currency(calculations.mortgagePro.loan) : '—'}
+                            </div>
+                            <div style={{ fontSize: '11px', color: colors.grey, marginTop: '6px' }}>
+                              {calculations.mortgagePro?.limited === 'ltv' ? '📊 LTV limited' :
+                               calculations.mortgagePro?.limited === 'icr' ? '📉 ICR limited' :
+                               '❌ Rent too low'}
+                            </div>
+                            <div style={{ fontSize: '10px', color: colors.grey, marginTop: '4px' }}>
+                              Stress: {fmt.percent(calculations.mortgagePro?.stressRate || 0)}
+                            </div>
+                          </div>
+                        </div>
+
+                        {calculations.proAdvantage > 0 && (
+                          <div style={{ marginTop: '12px', padding: '14px', background: '#EDE9FE', borderRadius: '10px', textAlign: 'center' }}>
+                            <div style={{ fontSize: '15px', fontWeight: '700', color: colors.purple }}>💰 Borrow {fmt.currency(calculations.proAdvantage)} MORE with Mortgage Pro!</div>
+                            <div style={{ fontSize: '11px', color: colors.grey, marginTop: '4px' }}>Lower stress rate = higher max loan for same rent</div>
+                          </div>
+                        )}
+
+                        {calculations.proAdvantage === 0 && calculations.mortgagePro?.limited === 'ltv' && (
+                          <div style={{ marginTop: '12px', padding: '12px', background: colors.cream, borderRadius: '8px', fontSize: '12px', color: colors.grey, textAlign: 'center' }}>
+                            Both products hit max LTV - your rent supports the maximum!
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+
+                {/* I WANT MAX LTV */}
+                {data.rentMode === 'want_max' && calculations.valuation > 0 && (
+                  <>
+                    <div style={{ padding: '16px', background: colors.cream, borderRadius: '10px', marginBottom: '16px' }}>
+                      <div style={{ fontSize: '13px', color: colors.grey }}>To borrow max LTV ({calculations.maxLtvPercent}%)</div>
+                      <div style={{ fontSize: '22px', fontWeight: '700' }}>{fmt.currency(calculations.maxLtvLoan)}</div>
+                    </div>
+
+                    <div style={{ fontSize: '13px', fontWeight: '600', color: colors.grey, marginBottom: '12px' }}>RENT REQUIRED</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div style={{ padding: '16px', background: colors.white, borderRadius: '12px', border: `2px solid ${colors.green}` }}>
+                        <div style={{ fontSize: '11px', fontWeight: '600', color: colors.green, marginBottom: '8px' }}>TAB MORTGAGE</div>
+                        <div style={{ fontSize: '22px', fontWeight: '700' }}>{fmt.currency(calculations.rentForMaxStandard.rent)}</div>
+                        <div style={{ fontSize: '11px', color: colors.grey, marginTop: '4px' }}>per month</div>
+                        <div style={{ fontSize: '10px', color: colors.grey, marginTop: '6px' }}>Stress: {fmt.percent(calculations.rentForMaxStandard.stressRate || 0)}</div>
+                      </div>
+                      <div style={{ padding: '16px', background: colors.white, borderRadius: '12px', border: `2px solid ${colors.purple}` }}>
+                        <div style={{ fontSize: '11px', fontWeight: '600', color: colors.purple, marginBottom: '8px' }}>MORTGAGE PRO</div>
+                        <div style={{ fontSize: '22px', fontWeight: '700' }}>{fmt.currency(calculations.rentForMaxPro.rent)}</div>
+                        <div style={{ fontSize: '11px', color: colors.grey, marginTop: '4px' }}>per month</div>
+                        <div style={{ fontSize: '10px', color: colors.grey, marginTop: '6px' }}>Stress: {fmt.percent(calculations.rentForMaxPro.stressRate || 0)}</div>
+                      </div>
+                    </div>
+
+                    {calculations.rentSaving > 0 && (
+                      <div style={{ marginTop: '12px', padding: '14px', background: '#EDE9FE', borderRadius: '10px', textAlign: 'center' }}>
+                        <div style={{ fontSize: '15px', fontWeight: '700', color: colors.purple }}>💰 {fmt.currency(calculations.rentSaving)} LESS rent needed with Pro!</div>
+                      </div>
+                    )}
+
+                    <button onClick={() => { updateData('rent', calculations.rentForMaxPro.rent.toString()); updateData('rentMode', 'know_rent'); }} style={{ width: '100%', marginTop: '16px', padding: '12px', background: colors.purple, color: colors.white, border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
+                      Use {fmt.currency(calculations.rentForMaxPro.rent)} as rent →
+                    </button>
+                  </>
+                )}
+
+                {/* ICR Formula */}
+                {data.rentMode && (
+                  <div style={{ marginTop: '16px', padding: '12px', background: colors.white, borderRadius: '8px', fontSize: '11px', color: colors.grey, border: `1px solid ${colors.creamDark}` }}>
+                    <strong>ICR:</strong> Rent ÷ (Loan × Stress Rate) ≥ {calculations.icrRequired}x<br/>
+                    <strong>Standard:</strong> Stress = Pay Rate + {calculations.stressAddOn}%<br/>
+                    <strong>Pro:</strong> Stress = (Pay Rate - {calculations.prepaidRate}%) + {calculations.stressAddOn}% = Pay Rate - {calculations.prepaidRate - calculations.stressAddOn}%
+                  </div>
+                )}
+
+                {data.rentMode && (data.rent || data.rentMode === 'want_max') && (
+                  <button onClick={() => nextSection('rental')} style={{ width: '100%', padding: '14px', background: colors.orange, color: colors.white, border: 'none', borderRadius: '10px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', marginTop: '16px' }}>Continue →</button>
+                )}
+              </Section>
+            )}
+
+            {/* 6. Borrower */}
+            <Section title={data.loanPurpose === 'bridge' ? '5. Borrower' : '6. Borrower'} subtitle={data.borrowerType ? config.borrowerTypes.find(b => b.value === data.borrowerType)?.label : 'Who is borrowing?'} status={getStatus('borrower')} isOpen={openSection === 'borrower'} onToggle={() => setOpenSection(openSection === 'borrower' ? null : 'borrower')} scrollRef={sectionRefs.borrower}>
+              <InputField label="Borrower Name" value={data.borrowerName} onChange={v => updateData('borrowerName', v)} placeholder="e.g. John Smith or ABC Ltd" />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {config.borrowerTypes.map(bt => (
+                  <OptionButton key={bt.value} selected={data.borrowerType === bt.value} onClick={() => updateData('borrowerType', bt.value)} small>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                      <span>{bt.label}</span>
+                      {bt.note && <span style={{ fontSize: '10px', color: colors.amber, background: '#FEF3C7', padding: '2px 6px', borderRadius: '4px' }}>{bt.note}</span>}
+                    </div>
+                  </OptionButton>
+                ))}
+              </div>
+              <div style={{ marginTop: '12px', fontSize: '11px', color: colors.grey }}>
+                Age requirement: {config.borrowerAge.min}-{config.borrowerAge.max} years • Max 4 borrowers
+              </div>
+              {data.borrowerType && <button onClick={() => nextSection('borrower')} style={{ width: '100%', padding: '14px', background: colors.orange, color: colors.white, border: 'none', borderRadius: '10px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', marginTop: '16px' }}>Continue →</button>}
+            </Section>
+
+            {/* 7. Credit */}
+            <Section title={data.loanPurpose === 'bridge' ? '6. Credit Check' : '7. Credit Check'} subtitle={data.creditClean === true ? 'Criteria met' : data.creditClean === false ? 'Out of policy' : 'Credit check'} status={getStatus('credit')} isOpen={openSection === 'credit'} onToggle={() => setOpenSection(openSection === 'credit' ? null : 'credit')} scrollRef={sectionRefs.credit}>
+              <div style={{ padding: '16px', background: colors.cream, borderRadius: '10px', marginBottom: '16px' }}>
+                <div style={{ fontWeight: '600', marginBottom: '10px' }}>Confirm NONE of these apply:</div>
+                <ul style={{ fontSize: '13px', color: colors.grey, paddingLeft: '20px', lineHeight: 1.8 }}>
+                  {config.adverseCredit.map((criteria, i) => (
+                    <li key={i}>{criteria}</li>
+                  ))}
+                </ul>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <OptionButton selected={data.creditClean === true} onClick={() => { updateData('creditClean', true); nextSection('credit'); }}>
+                  <span style={{ color: colors.green }}>✓</span> Confirmed - None apply
+                </OptionButton>
+                <OptionButton selected={data.creditClean === false} onClick={() => updateData('creditClean', false)} variant="danger">
+                  <span style={{ color: colors.red }}>✗</span> One or more apply
+                </OptionButton>
+              </div>
+              {data.creditClean === false && (
+                <div style={{ marginTop: '16px', padding: '14px', background: '#FEF2F2', borderRadius: '10px', border: `1px solid ${colors.red}` }}>
+                  <div style={{ color: colors.red, fontWeight: '600' }}>⚠️ Out of Policy</div>
+                  <div style={{ fontSize: '13px', color: colors.grey, marginTop: '4px' }}>Adverse credit criteria not met. Cannot proceed with quote.</div>
+                </div>
+              )}
+            </Section>
+
+            {/* 8. Terms */}
+            <Section title={data.loanPurpose === 'bridge' ? '7. Term & Details' : '8. Term & Details'} subtitle={data.termMonths ? (data.loanPurpose === 'mortgage' ? `${Math.round(data.termMonths/12)} years` : `${data.termMonths} months`) : 'Loan term'} status={getStatus('terms')} isOpen={openSection === 'terms'} onToggle={() => setOpenSection(openSection === 'terms' ? null : 'terms')} scrollRef={sectionRefs.terms}>
+
+              {/* Mortgage: Year buttons */}
+              {data.loanPurpose === 'mortgage' && (
+                <>
+                  <div style={{ fontSize: '13px', fontWeight: '600', color: colors.grey, marginBottom: '12px' }}>LOAN TERM</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '16px' }}>
+                    {config.terms.mortgage.years.map(years => (
+                      <button key={years} onClick={() => updateData('termMonths', (years * 12).toString())} style={{ padding: '16px', borderRadius: '10px', border: `2px solid ${parseInt(data.termMonths) === years * 12 ? colors.green : colors.creamDark}`, background: parseInt(data.termMonths) === years * 12 ? '#F0FDF4' : colors.white, cursor: 'pointer', textAlign: 'center' }}>
+                        <div style={{ fontSize: '20px', fontWeight: '700' }}>{years}</div>
+                        <div style={{ fontSize: '12px', color: colors.grey }}>years</div>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Bridge: Month input */}
+              {data.loanPurpose === 'bridge' && (
+                <InputField
+                  label="Term (2-24 months)"
+                  value={data.termMonths}
+                  onChange={v => {
+                    let term = parseInt(v) || '';
+                    if (term && term > 24) term = 24;
+                    if (term && term < 2) term = 2;
+                    updateData('termMonths', term.toString());
+                  }}
+                  suffix="months"
+                  type="number"
+                />
+              )}
+
+              <InputField label="Number of properties" value={data.numProperties} onChange={v => updateData('numProperties', Math.max(1, parseInt(v) || 1))} type="number" />
+
+              {/* Loan Override - optional */}
+              {(() => {
+                const maxLoan = data.loanPurpose === 'bridge' ? calculations.bridgeMaxLoan
+                  : data.loanPurpose === 'corePlus' ? calculations.corePlusMaxLtvLoan
+                  : Math.max(calculations.mortgageStandard?.loan || 0, calculations.mortgagePro?.loan || 0);
+                const maxLtv = data.loanPurpose === 'bridge' ? calculations.bridgeMaxLtv
+                  : data.loanPurpose === 'corePlus' ? calculations.corePlusMaxLtv
+                  : calculations.maxLtvPercent;
+                return maxLoan > 0 ? (
+                  <div style={{ marginTop: '16px', padding: '14px', background: colors.cream, borderRadius: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '12px', color: colors.grey }}>MAX AVAILABLE</span>
+                      <span style={{ fontSize: '16px', fontWeight: '700', color: colors.green }}>{fmt.currency(maxLoan)}</span>
+                    </div>
+                    <div style={{ fontSize: '11px', color: colors.grey, marginBottom: '12px' }}>
+                      {maxLtv}% LTV • Leave blank to use max, or enter specific amount:
+                    </div>
+                    <InputField
+                      label=""
+                      prefix="£"
+                      value={data.loanOverride}
+                      onChange={v => {
+                        const val = parseInt(v) || '';
+                        if (val && val > maxLoan) {
+                          updateData('loanOverride', maxLoan.toString());
+                        } else {
+                          updateData('loanOverride', val.toString());
+                        }
+                      }}
+                      placeholder={`Up to ${fmt.currency(maxLoan)}`}
+                      type="number"
+                    />
+                    {data.loanOverride && parseInt(data.loanOverride) > 0 && parseInt(data.loanOverride) < maxLoan && (
+                      <div style={{ fontSize: '11px', color: colors.purple, marginTop: '4px' }}>
+                        ✓ Using {fmt.currency(parseInt(data.loanOverride))} ({((parseInt(data.loanOverride) / calculations.valuation) * 100).toFixed(1)}% LTV)
+                      </div>
+                    )}
+                  </div>
+                ) : null;
+              })()}
+
+              {data.loanPurpose === 'mortgage' && (
+                <div style={{ marginTop: '16px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: '600', color: colors.grey, marginBottom: '12px' }}>ESG DISCOUNTS (exit fee reduction)</div>
+                  {[
+                    { key: 'epc', label: 'EPC A, B or C', discount: config.esgDiscounts.epc },
+                    { key: 'sustainability', label: 'Sustainability improvements', discount: config.esgDiscounts.sustainability },
+                    { key: 'social', label: 'Social enterprise', discount: config.esgDiscounts.social },
+                  ].map(item => (
+                    <label key={item.key} style={{ display: 'flex', alignItems: 'center', padding: '12px', background: colors.white, borderRadius: '8px', marginBottom: '8px', border: `1px solid ${colors.creamDark}`, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={data.esg[item.key]} onChange={e => updateData('esg', { ...data.esg, [item.key]: e.target.checked })} style={{ width: '18px', height: '18px', marginRight: '12px' }} />
+                      <span style={{ flex: 1 }}>{item.label}</span>
+                      <span style={{ color: colors.green, fontWeight: '600' }}>-{item.discount}%</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {data.termMonths && <button onClick={() => nextSection('terms')} style={{ width: '100%', padding: '14px', background: colors.orange, color: colors.white, border: 'none', borderRadius: '10px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', marginTop: '16px' }}>Generate Quote →</button>}
+            </Section>
+
+            {/* 9. Result */}
+            <Section title={data.loanPurpose === 'bridge' ? '8. Quote' : '9. Quote'} subtitle={isEligible() ? 'Full quote' : 'Complete sections above'} status={getStatus('result')} isOpen={openSection === 'result'} onToggle={() => setOpenSection(openSection === 'result' ? null : 'result')} scrollRef={sectionRefs.result}>
+              {!isEligible() ? (
+                <div style={{ padding: '20px', background: '#FEF2F2', borderRadius: '10px', textAlign: 'center' }}>
+                  <div style={{ fontWeight: '600', color: colors.red }}>Complete all sections above</div>
+                </div>
+              ) : (
+                <>
+                  {/* Disclaimer */}
+                  <div style={{ padding: '12px 16px', background: '#EDE9FE', borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.purple}` }}>
+                    <div style={{ fontSize: '12px', color: colors.purple }}>
+                      <strong>ℹ️ Illustration Only:</strong> This quotation is for example purposes only. All information should be verified before producing formal terms.
+                    </div>
+                  </div>
+
+                  {/* Summary */}
+                  <div style={{ padding: '16px', background: colors.cream, borderRadius: '10px', marginBottom: '16px', fontSize: '13px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                      <span style={{ color: colors.grey }}>Borrower:</span><span style={{ fontWeight: '500' }}>{data.borrowerName || '-'}</span>
+                      <span style={{ color: colors.grey }}>Property:</span><span style={{ fontWeight: '500' }}>{data.address || '-'}</span>
+                      <span style={{ color: colors.grey }}>Valuation:</span><span style={{ fontWeight: '500' }}>{fmt.currency(calculations.valuation)}</span>
+                      {data.loanPurpose === 'mortgage' && <><span style={{ color: colors.grey }}>Rent:</span><span style={{ fontWeight: '500' }}>{fmt.currency(calculations.rent)}/mo {data.rentMode === 'want_max' && <span style={{ fontSize: '10px', color: colors.purple }}>(required for max)</span>}</span></>}
+                      <span style={{ color: colors.grey }}>Term:</span><span style={{ fontWeight: '500' }}>{calculations.term} months</span>
+                    </div>
+                  </div>
+
+                  {/* MORTGAGE QUOTES - Side by side with DIFFERENT gross loans */}
+                  {data.loanPurpose === 'mortgage' && calculations.quoteStandard && calculations.quotePro && (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                        {/* Standard */}
+                        <div style={{ background: colors.white, borderRadius: '12px', overflow: 'hidden', border: `2px solid ${colors.green}` }}>
+                          <div style={{ background: colors.green, padding: '12px', color: colors.white, textAlign: 'center' }}>
+                            <div style={{ fontSize: '12px', fontWeight: '600' }}>TAB MORTGAGE</div>
+                          </div>
+                          <div style={{ padding: '14px' }}>
+                            <div style={{ fontSize: '10px', color: colors.grey }}>GROSS LOAN</div>
+                            <div style={{ fontSize: '20px', fontWeight: '700' }}>{fmt.currency(calculations.quoteStandard.grossLoan)}</div>
+                            <div style={{ fontSize: '11px', color: colors.grey, marginTop: '4px' }}>{calculations.quoteStandard.ltv.toFixed(1)}% LTV @ {fmt.percent(calculations.quoteStandard.payRate)} ({fmt.percent(calculations.quoteStandard.payRate / 12)}/mo)</div>
+
+                            <div style={{ fontSize: '10px', color: colors.grey, marginTop: '12px' }}>DEDUCTIONS</div>
+                            <div style={{ fontSize: '10px', marginTop: '4px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Arrangement</span><span>-{fmt.currency(calculations.quoteStandard.arrangementFee)}</span></div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Admin</span><span>-{fmt.currency(calculations.quoteStandard.adminFee)}</span></div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Valuation</span><span>-{fmt.currency(calculations.quoteStandard.valuationFee)}</span></div>
+                            </div>
+
+                            <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${colors.creamDark}` }}>
+                              <div style={{ fontSize: '10px', color: colors.grey }}>NET ADVANCE</div>
+                              <div style={{ fontSize: '18px', fontWeight: '700', color: colors.green }}>{fmt.currency(calculations.quoteStandard.servicedNet)}</div>
+                            </div>
+
+                            <div style={{ marginTop: '10px', padding: '8px', background: '#FEF3C7', borderRadius: '6px' }}>
+                              <div style={{ fontSize: '9px', color: '#92400E' }}>MONTHLY PAYMENT</div>
+                              <div style={{ fontSize: '14px', fontWeight: '600', color: '#92400E' }}>{fmt.currencyFull(calculations.quoteStandard.monthlyInterest)}</div>
+                            </div>
+
+                            <div style={{ marginTop: '8px', padding: '6px', background: '#F0FDF4', borderRadius: '4px', fontSize: '10px', color: colors.green }}>
+                              ICR: {calculations.quoteStandard.icr.toFixed(2)}x ✓
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Pro */}
+                        <div style={{ background: colors.white, borderRadius: '12px', overflow: 'hidden', border: `2px solid ${colors.purple}` }}>
+                          <div style={{ background: colors.purple, padding: '12px', color: colors.white, textAlign: 'center' }}>
+                            <div style={{ fontSize: '12px', fontWeight: '600' }}>MORTGAGE PRO</div>
+                          </div>
+                          <div style={{ padding: '14px' }}>
+                            <div style={{ fontSize: '10px', color: colors.grey }}>GROSS LOAN</div>
+                            <div style={{ fontSize: '20px', fontWeight: '700' }}>
+                              {fmt.currency(calculations.quotePro.grossLoan)}
+                              {calculations.proAdvantage > 0 && <span style={{ fontSize: '10px', color: colors.purple, marginLeft: '4px' }}>+{fmt.currency(calculations.proAdvantage)}</span>}
+                            </div>
+                            <div style={{ fontSize: '11px', color: colors.grey, marginTop: '4px' }}>{calculations.quotePro.ltv.toFixed(1)}% LTV @ {fmt.percent(calculations.quotePro.effectiveRate)} eff ({fmt.percent(calculations.quotePro.effectiveRate / 12)}/mo)</div>
+
+                            <div style={{ fontSize: '10px', color: colors.grey, marginTop: '12px' }}>DEDUCTIONS</div>
+                            <div style={{ fontSize: '10px', marginTop: '4px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Arrangement</span><span>-{fmt.currency(calculations.quotePro.arrangementFee)}</span></div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Admin</span><span>-{fmt.currency(calculations.quotePro.adminFee)}</span></div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Valuation</span><span>-{fmt.currency(calculations.quotePro.valuationFee)}</span></div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', color: colors.purple }}><span>Prepaid Int ({calculations.term}mo)</span><span>-{fmt.currency(calculations.quotePro.prepaidInterest)}</span></div>
+                            </div>
+
+                            <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${colors.creamDark}` }}>
+                              <div style={{ fontSize: '10px', color: colors.grey }}>NET ADVANCE</div>
+                              <div style={{ fontSize: '18px', fontWeight: '700', color: colors.purple }}>{fmt.currency(calculations.quotePro.servicedNet)}</div>
+                            </div>
+
+                            <div style={{ marginTop: '10px', padding: '8px', background: '#FEF3C7', borderRadius: '6px' }}>
+                              <div style={{ fontSize: '9px', color: '#92400E' }}>MONTHLY PAYMENT</div>
+                              <div style={{ fontSize: '14px', fontWeight: '600', color: '#92400E' }}>{fmt.currencyFull(calculations.quotePro.monthlyInterest)}</div>
+                            </div>
+
+                            <div style={{ marginTop: '8px', padding: '6px', background: '#EDE9FE', borderRadius: '4px', fontSize: '10px', color: colors.purple }}>
+                              ICR: {calculations.quotePro.icr.toFixed(2)}x ✓
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Winner / Comparison */}
+                      <div style={{ padding: '14px', background: '#EDE9FE', borderRadius: '10px', marginBottom: '16px' }}>
+                        <div style={{ fontSize: '14px', fontWeight: '700', color: colors.purple, textAlign: 'center', marginBottom: '10px' }}>
+                          💰 MORTGAGE PRO ADVANTAGE
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ color: colors.grey }}>Extra Borrowing</div>
+                            <div style={{ fontWeight: '700', color: colors.purple }}>{calculations.proAdvantage > 0 ? `+${fmt.currency(calculations.proAdvantage)}` : 'Same'}</div>
+                          </div>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ color: colors.grey }}>Rate Saving</div>
+                            <div style={{ fontWeight: '700', color: colors.green }}>{fmt.percent(calculations.quoteStandard.payRate - calculations.quotePro.effectiveRate)} cheaper</div>
+                          </div>
+                        </div>
+                        {calculations.quotePro.servicedNet > calculations.quoteStandard.servicedNet && (
+                          <div style={{ marginTop: '10px', textAlign: 'center', fontSize: '13px', color: colors.purple }}>
+                            Net advance: <strong>{fmt.currency(calculations.quotePro.servicedNet - calculations.quoteStandard.servicedNet)} more</strong> in your pocket
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Exit Fee */}
+                      <div style={{ padding: '14px', background: colors.white, borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.creamDark}`, display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Exit Fee {calculations.quoteStandard.esgDiscount > 0 && <span style={{ color: colors.green, fontSize: '11px' }}>(-{fmt.percent(calculations.quoteStandard.esgDiscount)} ESG)</span>}</span>
+                        <span style={{ fontWeight: '600' }}>{fmt.percent(calculations.quoteStandard.exitFeePercent)}</span>
+                      </div>
+
+                      {/* Redemption Statement */}
+                      <div style={{ background: colors.white, borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.creamDark}`, overflow: 'hidden' }}>
+                        <div style={{ padding: '12px 14px', background: colors.cream, borderBottom: `1px solid ${colors.creamDark}` }}>
+                          <div style={{ fontSize: '12px', fontWeight: '600', color: colors.dark }}>📋 REDEMPTION STATEMENT</div>
+                          <div style={{ fontSize: '10px', color: colors.grey }}>Amount owed if exiting at end of year</div>
+                        </div>
+                        <div style={{ padding: '12px 14px' }}>
+                          <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse' }}>
+                            <thead>
+                              <tr style={{ borderBottom: `1px solid ${colors.creamDark}` }}>
+                                <th style={{ textAlign: 'left', padding: '6px 0', color: colors.grey, fontWeight: '500' }}>Year</th>
+                                <th style={{ textAlign: 'right', padding: '6px 0', color: colors.green, fontWeight: '500' }}>Standard</th>
+                                <th style={{ textAlign: 'right', padding: '6px 0', color: colors.purple, fontWeight: '500' }}>Pro</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[1, 2, 3, 4, 5].filter(y => y <= Math.ceil(calculations.term / 12)).map(year => {
+                                const stdLoan = calculations.quoteStandard.grossLoan;
+                                const proLoan = calculations.quotePro.grossLoan;
+                                const exitFeeRate = calculations.quoteStandard.exitFeePercent / 100;
+                                const termYears = calculations.term / 12;
+
+                                // Standard: Loan + Exit Fee
+                                const stdRedemption = stdLoan + (stdLoan * exitFeeRate);
+
+                                // Pro: Loan + Exit Fee - Unused Prepaid Interest
+                                // Prepaid interest covers the full term. If you exit early, you get the unused portion back.
+                                const totalPrepaid = calculations.quotePro.prepaidInterest;
+                                const usedPrepaid = totalPrepaid * (year / termYears); // Interest used up to this year
+                                const unusedPrepaid = Math.max(0, totalPrepaid - usedPrepaid);
+                                const proRedemption = proLoan + (proLoan * exitFeeRate) - unusedPrepaid;
+
+                                return (
+                                  <tr key={year} style={{ borderBottom: `1px solid ${colors.creamDark}` }}>
+                                    <td style={{ padding: '8px 0', fontWeight: '500' }}>Year {year}</td>
+                                    <td style={{ textAlign: 'right', padding: '8px 0' }}>{fmt.currency(stdRedemption)}</td>
+                                    <td style={{ textAlign: 'right', padding: '8px 0' }}>
+                                      {fmt.currency(proRedemption)}
+                                      {unusedPrepaid > 0 && <span style={{ fontSize: '9px', color: colors.green, display: 'block' }}>(-{fmt.currency(unusedPrepaid)} rebate)</span>}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                          <div style={{ fontSize: '10px', color: colors.grey, marginTop: '8px' }}>
+                            * Standard: Loan + Exit Fee ({fmt.percent(calculations.quoteStandard.exitFeePercent)})<br/>
+                            * Pro: Loan + Exit Fee - Unused Prepaid Interest Rebate
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* BRIDGE QUOTE */}
+                  {data.loanPurpose === 'bridge' && calculations.quoteBridge && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                      {/* Retained */}
+                      <div style={{ background: colors.white, borderRadius: '12px', overflow: 'hidden', border: `1px solid ${colors.creamDark}` }}>
+                        <div style={{ background: colors.dark, padding: '12px', color: colors.white, textAlign: 'center' }}>
+                          <div style={{ fontSize: '12px', fontWeight: '600' }}>RETAINED</div>
+                          <div style={{ fontSize: '9px', opacity: 0.8 }}>Interest rolled up</div>
+                        </div>
+                        <div style={{ padding: '14px' }}>
+                          <div style={{ fontSize: '10px', color: colors.grey }}>GROSS LOAN</div>
+                          <div style={{ fontSize: '20px', fontWeight: '700' }}>{fmt.currency(calculations.quoteBridge.grossLoan)}</div>
+                          <div style={{ fontSize: '11px', color: colors.grey, marginTop: '4px' }}>{calculations.quoteBridge.ltv.toFixed(1)}% LTV @ {fmt.percent(calculations.quoteBridge.payRate)} ({fmt.percent(calculations.quoteBridge.payRate / 12)}/mo)</div>
+
+                          <div style={{ fontSize: '10px', color: colors.grey, marginTop: '12px' }}>DEDUCTIONS (all retained)</div>
+                          <div style={{ fontSize: '10px', marginTop: '4px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Arrangement</span><span>-{fmt.currency(calculations.quoteBridge.arrangementFee)}</span></div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Admin</span><span>-{fmt.currency(calculations.quoteBridge.adminFee)}</span></div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Valuation</span><span>-{fmt.currency(calculations.quoteBridge.valuationFee)}</span></div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', color: colors.orange }}><span>Interest ({calculations.term}mo)</span><span>-{fmt.currency(calculations.quoteBridge.totalInterest)}</span></div>
+                          </div>
+
+                          <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${colors.creamDark}` }}>
+                            <div style={{ fontSize: '10px', color: colors.grey }}>NET ADVANCE</div>
+                            <div style={{ fontSize: '18px', fontWeight: '700', color: colors.green }}>{fmt.currency(calculations.quoteBridge.retainedNet)}</div>
+                          </div>
+
+                          <div style={{ marginTop: '8px', padding: '6px', background: colors.cream, borderRadius: '4px', fontSize: '10px', color: colors.grey }}>
+                            No monthly payments
+                          </div>
+                        </div>
+                      </div>
+                      {/* Serviced */}
+                      <div style={{ background: colors.white, borderRadius: '12px', overflow: 'hidden', border: `2px solid ${colors.orange}` }}>
+                        <div style={{ background: colors.orange, padding: '12px', color: colors.white, textAlign: 'center' }}>
+                          <div style={{ fontSize: '12px', fontWeight: '600' }}>SERVICED</div>
+                          <div style={{ fontSize: '9px', opacity: 0.9 }}>Interest paid monthly</div>
+                        </div>
+                        <div style={{ padding: '14px' }}>
+                          <div style={{ fontSize: '10px', color: colors.grey }}>GROSS LOAN</div>
+                          <div style={{ fontSize: '20px', fontWeight: '700' }}>{fmt.currency(calculations.quoteBridge.grossLoan)}</div>
+                          <div style={{ fontSize: '11px', color: colors.grey, marginTop: '4px' }}>{calculations.quoteBridge.ltv.toFixed(1)}% LTV @ {fmt.percent(calculations.quoteBridge.payRate)} ({fmt.percent(calculations.quoteBridge.payRate / 12)}/mo)</div>
+
+                          <div style={{ fontSize: '10px', color: colors.grey, marginTop: '12px' }}>DEDUCTIONS</div>
+                          <div style={{ fontSize: '10px', marginTop: '4px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Arrangement</span><span>-{fmt.currency(calculations.quoteBridge.arrangementFee)}</span></div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Admin</span><span>-{fmt.currency(calculations.quoteBridge.adminFee)}</span></div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Valuation</span><span>-{fmt.currency(calculations.quoteBridge.valuationFee)}</span></div>
+                          </div>
+
+                          <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${colors.creamDark}` }}>
+                            <div style={{ fontSize: '10px', color: colors.grey }}>NET ADVANCE</div>
+                            <div style={{ fontSize: '18px', fontWeight: '700', color: colors.green }}>{fmt.currency(calculations.quoteBridge.servicedNet)}</div>
+                          </div>
+
+                          <div style={{ marginTop: '10px', padding: '8px', background: '#FEF3C7', borderRadius: '6px' }}>
+                            <div style={{ fontSize: '9px', color: '#92400E' }}>MONTHLY PAYMENT</div>
+                            <div style={{ fontSize: '14px', fontWeight: '600', color: '#92400E' }}>{fmt.currencyFull(calculations.quoteBridge.monthlyInterest)}</div>
+                            <div style={{ fontSize: '9px', color: '#92400E', marginTop: '2px' }}>× {calculations.term} months = {fmt.currency(calculations.quoteBridge.totalInterest)}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Bridge Redemption Statement */}
+                  {data.loanPurpose === 'bridge' && calculations.quoteBridge && (
+                    <div style={{ background: colors.white, borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.creamDark}`, overflow: 'hidden' }}>
+                      <div style={{ padding: '12px 14px', background: colors.cream, borderBottom: `1px solid ${colors.creamDark}` }}>
+                        <div style={{ fontSize: '12px', fontWeight: '600', color: colors.dark }}>📋 REDEMPTION STATEMENT</div>
+                        <div style={{ fontSize: '10px', color: colors.grey }}>Amount owed if exiting at month (Serviced)</div>
+                      </div>
+                      <div style={{ padding: '12px 14px' }}>
+                        <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ borderBottom: `1px solid ${colors.creamDark}` }}>
+                              <th style={{ textAlign: 'left', padding: '6px 0', color: colors.grey, fontWeight: '500' }}>Month</th>
+                              <th style={{ textAlign: 'right', padding: '6px 0', color: colors.orange, fontWeight: '500' }}>Redemption</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[6, 12, 18, 24].filter(m => m <= calculations.term).map(month => {
+                              const loan = calculations.quoteBridge.grossLoan;
+                              // Bridge has no exit fee, just capital repayment
+                              return (
+                                <tr key={month} style={{ borderBottom: `1px solid ${colors.creamDark}` }}>
+                                  <td style={{ padding: '8px 0', fontWeight: '500' }}>Month {month}</td>
+                                  <td style={{ textAlign: 'right', padding: '8px 0' }}>{fmt.currency(loan)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                        <div style={{ fontSize: '10px', color: colors.grey, marginTop: '8px' }}>
+                          * Bridge: No exit fee. Monthly interest paid separately.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* CORE PLUS QUOTE */}
+                  {data.loanPurpose === 'corePlus' && calculations.quoteCorePlus && (
+                    <>
+                      {/* Charge Type & Referral Banner */}
+                      <div style={{ padding: '12px 16px', background: calculations.quoteCorePlus.isSecondCharge ? '#EDE9FE' : '#F0FDFA', borderRadius: '10px', marginBottom: '16px', border: `1px solid ${calculations.quoteCorePlus.isSecondCharge ? colors.purple : colors.teal}` }}>
+                        <div style={{ fontSize: '13px', fontWeight: '600', color: calculations.quoteCorePlus.isSecondCharge ? colors.purple : colors.teal }}>
+                          {calculations.quoteCorePlus.isSecondCharge ? '2nd Charge' : '1st Charge'} • Max {calculations.corePlusMaxLtv}% LTV
+                        </div>
+                      </div>
+
+                      {/* Referral Warning */}
+                      {calculations.quoteCorePlus.needsReferral && (
+                        <div style={{ padding: '12px 16px', background: '#FEF2F2', borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.red}` }}>
+                          <div style={{ fontSize: '12px', color: colors.red }}>
+                            <strong>⚠️ REFER TO CREDIT</strong> - LTV above rate card limit. Pricing subject to credit approval.
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Rate Loading Banner */}
+                      {calculations.quoteCorePlus.rateLoading > 0 && (
+                        <div style={{ padding: '12px 16px', background: '#FEF3C7', borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.amber}` }}>
+                          <div style={{ fontSize: '12px', color: '#92400E' }}>
+                            <strong>⚠️ Rate Loading Applied:</strong>
+                            {calculations.quoteCorePlus.hasLightRefurbLoading && ' Light Refurb (+0.10%)'}
+                            {calculations.quoteCorePlus.hasHeavyRefurbLoading && ' Heavy Refurb (+0.20%)'}
+                            {calculations.quoteCorePlus.hasAdverseLoading && ' Adverse (+0.10%)'}
+                            {calculations.quoteCorePlus.hasOffshoreLoading && ' Offshore (+0.10%)'}
+                            {calculations.quoteCorePlus.hasCharityLoading && ' Charity (+0.10%)'}
+                            {' '}= +{fmt.percent(calculations.quoteCorePlus.rateLoading)} pcm total
+                          </div>
+                        </div>
+                      )}
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                        {/* Retained */}
+                        <div style={{ background: colors.white, borderRadius: '12px', overflow: 'hidden', border: `1px solid ${colors.creamDark}` }}>
+                          <div style={{ background: colors.dark, padding: '12px', color: colors.white, textAlign: 'center' }}>
+                            <div style={{ fontSize: '12px', fontWeight: '600' }}>RETAINED</div>
+                            <div style={{ fontSize: '9px', opacity: 0.8 }}>Interest rolled up</div>
+                          </div>
+                          <div style={{ padding: '14px' }}>
+                            <div style={{ fontSize: '10px', color: colors.grey }}>GROSS LOAN</div>
+                            <div style={{ fontSize: '20px', fontWeight: '700' }}>{fmt.currency(calculations.quoteCorePlus.grossLoan)}</div>
+                            <div style={{ fontSize: '11px', color: colors.grey, marginTop: '4px' }}>
+                              {calculations.quoteCorePlus.ltv.toFixed(1)}% LTV @ <span style={{ color: colors.teal, fontWeight: '600' }}>{fmt.percent(calculations.quoteCorePlus.ratePcm)} pcm</span>
+                            </div>
+
+                            <div style={{ fontSize: '10px', color: colors.grey, marginTop: '12px' }}>DEDUCTIONS (all retained)</div>
+                            <div style={{ fontSize: '10px', marginTop: '4px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Arrangement</span><span>-{fmt.currency(calculations.quoteCorePlus.arrangementFee)}</span></div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Admin</span><span>-{fmt.currency(calculations.quoteCorePlus.adminFee)}</span></div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Valuation</span><span>-{fmt.currency(calculations.quoteCorePlus.valuationFee)}</span></div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', color: colors.teal }}><span>Interest ({calculations.term}mo)</span><span>-{fmt.currency(calculations.quoteCorePlus.totalInterest)}</span></div>
+                            </div>
+
+                            <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${colors.creamDark}` }}>
+                              <div style={{ fontSize: '10px', color: colors.grey }}>NET ADVANCE</div>
+                              <div style={{ fontSize: '18px', fontWeight: '700', color: colors.green }}>{fmt.currency(calculations.quoteCorePlus.retainedNet)}</div>
+                            </div>
+
+                            <div style={{ marginTop: '8px', padding: '6px', background: colors.cream, borderRadius: '4px', fontSize: '10px', color: colors.grey }}>
+                              No monthly payments
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Serviced */}
+                        <div style={{ background: colors.white, borderRadius: '12px', overflow: 'hidden', border: `2px solid ${colors.teal}` }}>
+                          <div style={{ background: colors.teal, padding: '12px', color: colors.white, textAlign: 'center' }}>
+                            <div style={{ fontSize: '12px', fontWeight: '600' }}>SERVICED</div>
+                            <div style={{ fontSize: '9px', opacity: 0.9 }}>Interest paid monthly</div>
+                          </div>
+                          <div style={{ padding: '14px' }}>
+                            <div style={{ fontSize: '10px', color: colors.grey }}>GROSS LOAN</div>
+                            <div style={{ fontSize: '20px', fontWeight: '700' }}>{fmt.currency(calculations.quoteCorePlus.grossLoan)}</div>
+                            <div style={{ fontSize: '11px', color: colors.grey, marginTop: '4px' }}>
+                              {calculations.quoteCorePlus.ltv.toFixed(1)}% LTV @ <span style={{ color: colors.teal, fontWeight: '600' }}>{fmt.percent(calculations.quoteCorePlus.ratePcm)} pcm</span>
+                            </div>
+
+                            <div style={{ fontSize: '10px', color: colors.grey, marginTop: '12px' }}>DEDUCTIONS</div>
+                            <div style={{ fontSize: '10px', marginTop: '4px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Arrangement</span><span>-{fmt.currency(calculations.quoteCorePlus.arrangementFee)}</span></div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Admin</span><span>-{fmt.currency(calculations.quoteCorePlus.adminFee)}</span></div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Valuation</span><span>-{fmt.currency(calculations.quoteCorePlus.valuationFee)}</span></div>
+                            </div>
+
+                            <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${colors.creamDark}` }}>
+                              <div style={{ fontSize: '10px', color: colors.grey }}>NET ADVANCE</div>
+                              <div style={{ fontSize: '18px', fontWeight: '700', color: colors.green }}>{fmt.currency(calculations.quoteCorePlus.servicedNet)}</div>
+                            </div>
+
+                            <div style={{ marginTop: '10px', padding: '8px', background: '#F0FDFA', borderRadius: '6px' }}>
+                              <div style={{ fontSize: '9px', color: colors.teal }}>MONTHLY PAYMENT</div>
+                              <div style={{ fontSize: '14px', fontWeight: '600', color: colors.teal }}>{fmt.currencyFull(calculations.quoteCorePlus.monthlyInterest)}</div>
+                              <div style={{ fontSize: '9px', color: colors.teal, marginTop: '2px' }}>× {calculations.term} months = {fmt.currency(calculations.quoteCorePlus.totalInterest)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Core Plus Redemption Statement */}
+                      <div style={{ background: colors.white, borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.creamDark}`, overflow: 'hidden' }}>
+                        <div style={{ padding: '12px 14px', background: colors.cream, borderBottom: `1px solid ${colors.creamDark}` }}>
+                          <div style={{ fontSize: '12px', fontWeight: '600', color: colors.dark }}>📋 REDEMPTION STATEMENT</div>
+                          <div style={{ fontSize: '10px', color: colors.grey }}>Amount owed if exiting at month (Serviced)</div>
+                        </div>
+                        <div style={{ padding: '12px 14px' }}>
+                          <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse' }}>
+                            <thead>
+                              <tr style={{ borderBottom: `1px solid ${colors.creamDark}` }}>
+                                <th style={{ textAlign: 'left', padding: '6px 0', color: colors.grey, fontWeight: '500' }}>Month</th>
+                                <th style={{ textAlign: 'right', padding: '6px 0', color: colors.teal, fontWeight: '500' }}>Redemption</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[6, 12, 18, 24].filter(m => m <= calculations.term).map(month => {
+                                const loan = calculations.quoteCorePlus.grossLoan;
+                                return (
+                                  <tr key={month} style={{ borderBottom: `1px solid ${colors.creamDark}` }}>
+                                    <td style={{ padding: '8px 0', fontWeight: '500' }}>Month {month}</td>
+                                    <td style={{ textAlign: 'right', padding: '8px 0' }}>{fmt.currency(loan)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                          <div style={{ fontSize: '10px', color: colors.grey, marginTop: '8px' }}>
+                            * Core Plus: No exit fee. Monthly interest paid separately.
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Save */}
+                  <button onClick={() => {
+                    let quote = `TAB QUOTE - ${new Date().toLocaleDateString('en-GB')}\n\nBorrower: ${data.borrowerName}\nProperty: ${data.address}\nValuation: ${fmt.currency(calculations.valuation)}\n`;
+                    if (calculations.quoteStandard) {
+                      quote += `\nTAB MORTGAGE\nGross: ${fmt.currency(calculations.quoteStandard.grossLoan)} | Net: ${fmt.currency(calculations.quoteStandard.servicedNet)}\nRate: ${fmt.percent(calculations.quoteStandard.payRate)} | Monthly: ${fmt.currencyFull(calculations.quoteStandard.monthlyInterest)}\n`;
+                    }
+                    if (calculations.quotePro) {
+                      quote += `\nMORTGAGE PRO\nGross: ${fmt.currency(calculations.quotePro.grossLoan)} | Net: ${fmt.currency(calculations.quotePro.servicedNet)}\nEffective: ${fmt.percent(calculations.quotePro.effectiveRate)}\n`;
+                    }
+                    if (calculations.quoteBridge) {
+                      quote += `\nTAB BRIDGE (CORE)\nGross: ${fmt.currency(calculations.quoteBridge.grossLoan)}\nNet (Serviced): ${fmt.currency(calculations.quoteBridge.servicedNet)} | Monthly: ${fmt.currencyFull(calculations.quoteBridge.monthlyInterest)}\nNet (Retained): ${fmt.currency(calculations.quoteBridge.retainedNet)}\n`;
+                    }
+                    if (calculations.quoteCorePlus) {
+                      quote += `\nTAB BRIDGE (CORE PLUS)\nGross: ${fmt.currency(calculations.quoteCorePlus.grossLoan)} @ ${fmt.percent(calculations.quoteCorePlus.ratePcm)} pcm\nNet (Serviced): ${fmt.currency(calculations.quoteCorePlus.servicedNet)} | Monthly: ${fmt.currencyFull(calculations.quoteCorePlus.monthlyInterest)}\nNet (Retained): ${fmt.currency(calculations.quoteCorePlus.retainedNet)}\n`;
+                    }
+                    quote += `\n---\nTAB v17 | Created by DK`;
+                    const blob = new Blob([quote], { type: 'text/plain' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `TAB-Quote-${new Date().toISOString().split('T')[0]}.txt`;
+                    a.click();
+                  }} style={{ width: '100%', padding: '16px', background: colors.green, color: colors.white, border: 'none', borderRadius: '10px', fontSize: '15px', fontWeight: '600', cursor: 'pointer' }}>
+                    💾 Save Quote
+                  </button>
+                </>
+              )}
+            </Section>
+
+          </main>
+
+          <footer style={{ padding: '20px', textAlign: 'center', fontSize: '11px', color: colors.greyLight }}>
+            TAB loans are unregulated. Property at risk.<br/>
+            v17 • ICR: {config.icr.required}x @ Pay+{config.icr.stressAddOn}% • Created by DK
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
