@@ -1,0 +1,7 @@
+# TAB Loan Calculator
+# https://duncankreeger.github.io/tab-calculator/
+
+User-agent: *
+Allow: /
+
+Sitemap: https://duncankreeger.github.io/tab-calculator/sitemap.xml
