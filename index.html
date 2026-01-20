@@ -1226,7 +1226,7 @@ Time: ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-dig
 PROPERTY DETAILS
 ────────────────────────────────────────
 Address: ${data.address || '[PROPERTY ADDRESS]'}
-Type: ${config.propertyTypes?.find(p => p.value === data.propertyType)?.label || data.propertyType || '-'}
+Type: ${[...(config.propertyTypes?.residential || []), ...(config.propertyTypes?.commercial || [])].find(p => p.value === data.propertyType)?.label || data.propertyType || '-'}
 Category: ${data.propertyCategory === 'commercial' ? 'Commercial' : 'Residential'}
 Valuation: ${fmt.currency(calculations.valuation)}
 Location: ${config.locations?.accepted?.find(l => l.value === data.location)?.label || data.location || '-'}
