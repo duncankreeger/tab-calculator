@@ -3,7 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>TAB Loan Calculator v17</title>
+  <title>TAB Loan Calculator | Quick Quote for Bridging & Property Finance</title>
+  <meta name="description" content="Get instant bridging loan and BTL mortgage quotes. TAB's free calculator shows rates, fees, and net advance in seconds.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://duncankreeger.github.io/tab-calculator/">
+
+  <!-- Open Graph for social sharing -->
+  <meta property="og:title" content="TAB Loan Calculator">
+  <meta property="og:description" content="Get your bridging or property finance quote in 60 seconds">
+  <meta property="og:url" content="https://duncankreeger.github.io/tab-calculator/">
+  <meta property="og:type" content="website">
+
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -554,6 +564,74 @@
       const [freeText, setFreeText] = useState('');
       const [parsed, setParsed] = useState(null); // Stores parsed result for feedback panel
 
+      // Location, time, weather, date state
+      const [contextInfo, setContextInfo] = useState({
+        location: 'London, UK',
+        time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+        date: new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+        weather: null,
+        weatherIcon: '☀️',
+      });
+
+      // Update time every minute
+      useEffect(() => {
+        const updateTime = () => {
+          setContextInfo(prev => ({
+            ...prev,
+            time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+            date: new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+          }));
+        };
+        const interval = setInterval(updateTime, 60000);
+        return () => clearInterval(interval);
+      }, []);
+
+      // Fetch location and weather on mount
+      useEffect(() => {
+        // Get location
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            async (position) => {
+              try {
+                // Reverse geocode to get city name
+                const geoResponse = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${position.coords.latitude}&longitude=${position.coords.longitude}&localityLanguage=en`);
+                const geoData = await geoResponse.json();
+                const city = geoData.city || geoData.locality || 'London';
+                const country = geoData.countryCode || 'UK';
+
+                // Get weather using Open-Meteo (free, no API key)
+                const weatherResponse = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${position.coords.latitude}&longitude=${position.coords.longitude}&current=temperature_2m,weather_code`);
+                const weatherData = await weatherResponse.json();
+
+                // Map weather code to icon
+                const weatherCode = weatherData.current?.weather_code || 0;
+                const temp = Math.round(weatherData.current?.temperature_2m || 0);
+                let weatherIcon = '☀️';
+                if (weatherCode >= 1 && weatherCode <= 3) weatherIcon = '⛅';
+                if (weatherCode >= 45 && weatherCode <= 48) weatherIcon = '🌫️';
+                if (weatherCode >= 51 && weatherCode <= 67) weatherIcon = '🌧️';
+                if (weatherCode >= 71 && weatherCode <= 77) weatherIcon = '❄️';
+                if (weatherCode >= 80 && weatherCode <= 82) weatherIcon = '🌧️';
+                if (weatherCode >= 95) weatherIcon = '⛈️';
+
+                setContextInfo(prev => ({
+                  ...prev,
+                  location: `${city}, ${country}`,
+                  weather: `${temp}°C`,
+                  weatherIcon,
+                }));
+              } catch (e) {
+                console.log('Could not fetch location/weather');
+              }
+            },
+            () => {
+              // Permission denied or error - use defaults
+              console.log('Location permission denied');
+            }
+          );
+        }
+      }, []);
+
       const [data, setData] = useState({
         location: null,
         propertyType: null,
@@ -575,6 +653,9 @@
         corePlusLoading: { lightRefurb: false, heavyRefurb: false, adverse: false, offshore: false, charity: false },
         // Loan override - optional, leave blank for max
         loanOverride: '',
+        // For email quote
+        brokerName: '',
+        propertyAddress: '',
       });
 
       const sectionRefs = {
@@ -1014,11 +1095,30 @@
               <div style={{ width: '40px', height: '40px', background: colors.white, borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '700', color: colors.orange }}>TAB</div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: '18px', fontWeight: '700', color: colors.white }}>Loan Calculator</div>
-                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.8)' }}>v17 • BoE {config.boeBaseRate}%</div>
+                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.8)' }}>v18 • BoE {config.boeBaseRate}%</div>
               </div>
               <button onClick={() => setShowAdmin(!showAdmin)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', padding: '8px 12px', borderRadius: '8px', color: colors.white, fontSize: '12px', cursor: 'pointer' }}>⚙️</button>
             </div>
           </header>
+
+          {/* Context Info Bar - Location, Time, Date, Weather */}
+          <div style={{ background: colors.dark, padding: '10px 20px' }}>
+            <div style={{ maxWidth: '600px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: 'rgba(255,255,255,0.9)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span>📍</span>
+                <span>{contextInfo.location}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                {contextInfo.weather && (
+                  <span>{contextInfo.weatherIcon} {contextInfo.weather}</span>
+                )}
+                <span>🕐 {contextInfo.time}</span>
+              </div>
+            </div>
+            <div style={{ maxWidth: '600px', margin: '4px auto 0', fontSize: '11px', color: 'rgba(255,255,255,0.6)', textAlign: 'center' }}>
+              {contextInfo.date}
+            </div>
+          </div>
 
           {/* Admin Panel */}
           {showAdmin && (
@@ -2202,7 +2302,193 @@ Examples:
                     </>
                   )}
 
-                  {/* Save */}
+                  {/* Email Quote Section */}
+                  <div style={{ background: colors.white, borderRadius: '12px', padding: '16px', marginBottom: '16px', border: `2px solid ${colors.green}` }}>
+                    <div style={{ fontSize: '14px', fontWeight: '700', color: colors.green, marginBottom: '12px' }}>📧 Email This Quote</div>
+
+                    <div style={{ marginBottom: '12px' }}>
+                      <label style={{ fontSize: '12px', color: colors.grey, display: 'block', marginBottom: '4px' }}>Broker Name</label>
+                      <input
+                        type="text"
+                        value={data.brokerName || ''}
+                        onChange={e => updateData('brokerName', e.target.value)}
+                        placeholder="Enter your name"
+                        style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '14px' }}
+                      />
+                    </div>
+
+                    <div style={{ marginBottom: '16px' }}>
+                      <label style={{ fontSize: '12px', color: colors.grey, display: 'block', marginBottom: '4px' }}>Property Address</label>
+                      <input
+                        type="text"
+                        value={data.propertyAddress || data.address || ''}
+                        onChange={e => updateData('propertyAddress', e.target.value)}
+                        placeholder="Full property address"
+                        style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '14px' }}
+                      />
+                    </div>
+
+                    <button onClick={() => {
+                      const productName = data.loanPurpose === 'bridge' ? 'TAB Bridge (Core)'
+                        : data.loanPurpose === 'corePlus' ? 'TAB Bridge (Core Plus)'
+                        : 'TAB Mortgage';
+
+                      const quote = calculations.quoteBridge || calculations.quoteCorePlus || calculations.quoteStandard;
+                      const quotePro = calculations.quotePro;
+
+                      let emailBody = `TAB LOAN ENQUIRY
+═══════════════════════════════════════
+
+Date: ${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+Time: ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+Broker: ${data.brokerName || '[BROKER NAME]'}
+
+PROPERTY DETAILS
+────────────────────────────────────────
+Address: ${data.propertyAddress || data.address || '[PROPERTY ADDRESS]'}
+Type: ${config.propertyTypes?.find(p => p.value === data.propertyType)?.label || data.propertyType || '-'}
+Category: ${data.propertyCategory === 'commercial' ? 'Commercial' : 'Residential'}
+Valuation: ${fmt.currency(calculations.valuation)}
+Location: ${config.locations?.accepted?.find(l => l.value === data.location)?.label || data.location || '-'}
+
+BORROWER DETAILS
+────────────────────────────────────────
+Name: ${data.borrowerName || '-'}
+Type: ${config.borrowerTypes?.find(b => b.value === data.borrowerType)?.label || data.borrowerType || '-'}
+Credit: ${data.creditClean ? 'Clean - criteria met' : 'Adverse - refer'}
+
+LOAN DETAILS
+────────────────────────────────────────
+Product: ${productName}
+Term: ${calculations.term} months${data.loanPurpose === 'mortgage' ? ` (${Math.round(calculations.term/12)} years)` : ''}
+`;
+
+                      if (data.loanPurpose === 'mortgage' && calculations.quoteStandard) {
+                        emailBody += `
+TAB MORTGAGE (STANDARD)
+────────────────────────────────────────
+Gross Loan: ${fmt.currency(calculations.quoteStandard.grossLoan)}
+LTV: ${calculations.quoteStandard.ltv.toFixed(1)}%
+Interest Rate: ${fmt.percent(calculations.quoteStandard.payRate)} (${fmt.percent(calculations.quoteStandard.payRate / 12)}/mo)
+
+Fees:
+  Arrangement (2%): ${fmt.currency(calculations.quoteStandard.arrangementFee)}
+  Admin: ${fmt.currency(calculations.quoteStandard.adminFee)}
+  Valuation: ${fmt.currency(calculations.quoteStandard.valuationFee)}
+
+Net Advance: ${fmt.currency(calculations.quoteStandard.servicedNet)}
+Monthly Payment: ${fmt.currencyFull(calculations.quoteStandard.monthlyInterest)}
+Exit Fee: ${fmt.percent(calculations.quoteStandard.exitFeePercent)}
+ICR: ${calculations.quoteStandard.icr.toFixed(2)}x
+`;
+                      }
+
+                      if (data.loanPurpose === 'mortgage' && calculations.quotePro) {
+                        emailBody += `
+TAB MORTGAGE PRO
+────────────────────────────────────────
+Gross Loan: ${fmt.currency(calculations.quotePro.grossLoan)}
+LTV: ${calculations.quotePro.ltv.toFixed(1)}%
+Effective Rate: ${fmt.percent(calculations.quotePro.effectiveRate)} (${fmt.percent(calculations.quotePro.effectiveRate / 12)}/mo)
+
+Fees:
+  Arrangement (2%): ${fmt.currency(calculations.quotePro.arrangementFee)}
+  Admin: ${fmt.currency(calculations.quotePro.adminFee)}
+  Valuation: ${fmt.currency(calculations.quotePro.valuationFee)}
+  Prepaid Interest: ${fmt.currency(calculations.quotePro.prepaidInterest)}
+
+Net Advance: ${fmt.currency(calculations.quotePro.servicedNet)}
+Monthly Payment: ${fmt.currencyFull(calculations.quotePro.monthlyInterest)}
+Exit Fee: ${fmt.percent(calculations.quotePro.exitFeePercent)}
+ICR: ${calculations.quotePro.icr.toFixed(2)}x
+`;
+                      }
+
+                      if (data.loanPurpose === 'bridge' && calculations.quoteBridge) {
+                        emailBody += `
+Gross Loan: ${fmt.currency(calculations.quoteBridge.grossLoan)}
+LTV: ${calculations.quoteBridge.ltv.toFixed(1)}%
+Interest Rate: ${fmt.percent(calculations.quoteBridge.payRate)} (${fmt.percent(calculations.quoteBridge.payRate / 12)}/mo)
+
+Fees:
+  Arrangement (2%): ${fmt.currency(calculations.quoteBridge.arrangementFee)}
+  Admin: ${fmt.currency(calculations.quoteBridge.adminFee)}
+  Valuation: ${fmt.currency(calculations.quoteBridge.valuationFee)}
+
+SERVICED (pay monthly):
+  Net Advance: ${fmt.currency(calculations.quoteBridge.servicedNet)}
+  Monthly Payment: ${fmt.currencyFull(calculations.quoteBridge.monthlyInterest)}
+
+RETAINED (roll up interest):
+  Net Advance: ${fmt.currency(calculations.quoteBridge.retainedNet)}
+  Total Interest: ${fmt.currency(calculations.quoteBridge.totalInterest)}
+
+Exit Fee: None
+`;
+                      }
+
+                      if (data.loanPurpose === 'corePlus' && calculations.quoteCorePlus) {
+                        emailBody += `
+Gross Loan: ${fmt.currency(calculations.quoteCorePlus.grossLoan)}
+LTV: ${calculations.quoteCorePlus.ltv.toFixed(1)}%
+Interest Rate: ${fmt.percent(calculations.quoteCorePlus.ratePcm)} pcm (${fmt.percent(calculations.quoteCorePlus.rateAnnual)} pa)
+Charge: ${calculations.quoteCorePlus.isSecondCharge ? '2nd Charge' : '1st Charge'}
+${calculations.quoteCorePlus.rateLoading > 0 ? `Rate Loading: +${fmt.percent(calculations.quoteCorePlus.rateLoading)} pcm` : ''}
+
+Fees:
+  Arrangement (2%): ${fmt.currency(calculations.quoteCorePlus.arrangementFee)}
+  Admin: ${fmt.currency(calculations.quoteCorePlus.adminFee)}
+  Valuation: ${fmt.currency(calculations.quoteCorePlus.valuationFee)}
+
+SERVICED (pay monthly):
+  Net Advance: ${fmt.currency(calculations.quoteCorePlus.servicedNet)}
+  Monthly Payment: ${fmt.currencyFull(calculations.quoteCorePlus.monthlyInterest)}
+
+RETAINED (roll up interest):
+  Net Advance: ${fmt.currency(calculations.quoteCorePlus.retainedNet)}
+  Total Interest: ${fmt.currency(calculations.quoteCorePlus.totalInterest)}
+
+Exit Fee: None
+`;
+                      }
+
+                      if (data.rent && data.loanPurpose === 'mortgage') {
+                        emailBody += `
+RENTAL INCOME
+────────────────────────────────────────
+Monthly Rent: ${fmt.currency(parseFloat(data.rent))}
+Annual Rent: ${fmt.currency(parseFloat(data.rent) * 12)}
+`;
+                      }
+
+                      emailBody += `
+═══════════════════════════════════════
+Generated by TAB Loan Calculator v18
+Please send to: enquiries@tabhq.com
+═══════════════════════════════════════`;
+
+                      navigator.clipboard.writeText(emailBody).then(() => {
+                        alert('Quote copied to clipboard!\\n\\nPaste into an email and send to:\\nenquiries@tabhq.com');
+                      }).catch(() => {
+                        // Fallback for older browsers
+                        const textArea = document.createElement('textarea');
+                        textArea.value = emailBody;
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                        alert('Quote copied to clipboard!\\n\\nPaste into an email and send to:\\nenquiries@tabhq.com');
+                      });
+                    }} style={{ width: '100%', padding: '16px', background: colors.green, color: colors.white, border: 'none', borderRadius: '10px', fontSize: '15px', fontWeight: '600', cursor: 'pointer' }}>
+                      📋 Copy Quote & Email to enquiries@tabhq.com
+                    </button>
+
+                    <div style={{ marginTop: '10px', fontSize: '11px', color: colors.grey, textAlign: 'center' }}>
+                      Copies full quote details to clipboard. Paste into your email app.
+                    </div>
+                  </div>
+
+                  {/* Save as File */}
                   <button onClick={() => {
                     let quote = `TAB QUOTE - ${new Date().toLocaleDateString('en-GB')}\n\nBorrower: ${data.borrowerName}\nProperty: ${data.address}\nValuation: ${fmt.currency(calculations.valuation)}\n`;
                     if (calculations.quoteStandard) {
@@ -2217,15 +2503,15 @@ Examples:
                     if (calculations.quoteCorePlus) {
                       quote += `\nTAB BRIDGE (CORE PLUS)\nGross: ${fmt.currency(calculations.quoteCorePlus.grossLoan)} @ ${fmt.percent(calculations.quoteCorePlus.ratePcm)} pcm\nNet (Serviced): ${fmt.currency(calculations.quoteCorePlus.servicedNet)} | Monthly: ${fmt.currencyFull(calculations.quoteCorePlus.monthlyInterest)}\nNet (Retained): ${fmt.currency(calculations.quoteCorePlus.retainedNet)}\n`;
                     }
-                    quote += `\n---\nTAB v17 | Created by DK`;
+                    quote += `\n---\nTAB v18 | Created by DK`;
                     const blob = new Blob([quote], { type: 'text/plain' });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
                     a.download = `TAB-Quote-${new Date().toISOString().split('T')[0]}.txt`;
                     a.click();
-                  }} style={{ width: '100%', padding: '16px', background: colors.green, color: colors.white, border: 'none', borderRadius: '10px', fontSize: '15px', fontWeight: '600', cursor: 'pointer' }}>
-                    💾 Save Quote
+                  }} style={{ width: '100%', padding: '14px', background: colors.grey, color: colors.white, border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', opacity: 0.7 }}>
+                    💾 Save as File
                   </button>
                 </>
               )}
@@ -2235,7 +2521,7 @@ Examples:
 
           <footer style={{ padding: '20px', textAlign: 'center', fontSize: '11px', color: colors.greyLight }}>
             TAB loans are unregulated. Property at risk.<br/>
-            v17 • ICR: {config.icr.required}x @ Pay+{config.icr.stressAddOn}% • Created by DK
+            v18 • ICR: {config.icr.required}x @ Pay+{config.icr.stressAddOn}% • Created by DK
           </footer>
         </div>
       );
