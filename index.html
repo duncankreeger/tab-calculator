@@ -14,6 +14,68 @@
   <meta property="og:url" content="https://duncankreeger.github.io/tab-calculator/">
   <meta property="og:type" content="website">
 
+  <!-- Google Analytics 4 -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-GQQGCS8DYK"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-GQQGCS8DYK');
+
+    // Custom event tracking functions
+    window.trackEvent = {
+      // Track when Brain Dump parser is used
+      parserUsed: function(success, fieldsExtracted) {
+        gtag('event', 'parser_used', {
+          'success': success,
+          'fields_extracted': fieldsExtracted
+        });
+      },
+
+      // Track product type selection
+      productSelected: function(productType, propertyType) {
+        gtag('event', 'product_selected', {
+          'product_type': productType,
+          'property_type': propertyType
+        });
+      },
+
+      // Track when a quote is generated/viewed
+      quoteGenerated: function(productType, loanAmount, ltv, propertyType, location) {
+        gtag('event', 'quote_generated', {
+          'product_type': productType,
+          'loan_amount': loanAmount,
+          'ltv_percent': ltv,
+          'property_type': propertyType,
+          'location': location
+        });
+      },
+
+      // Track when quote is copied (KEY CONVERSION)
+      quoteCopied: function(productType, loanAmount) {
+        gtag('event', 'quote_copied', {
+          'product_type': productType,
+          'loan_amount': loanAmount
+        });
+      },
+
+      // Track when quote is saved as file
+      quoteSaved: function(productType, loanAmount) {
+        gtag('event', 'quote_saved', {
+          'product_type': productType,
+          'loan_amount': loanAmount
+        });
+      },
+
+      // Track calculator section navigation
+      sectionViewed: function(sectionName) {
+        gtag('event', 'section_viewed', {
+          'section_name': sectionName
+        });
+      }
+    };
+  </script>
+
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -296,11 +358,13 @@
         if (postcodeMatch) result.address = postcodeMatch[1].toUpperCase();
       }
 
-      // ============ PROPERTY TYPE DETECTION ============
+      // ============ PROPERTY TYPE DETECTION (improved with shorthand) ============
       const propertyPatterns = [
+        // HMO patterns - check for bed/room count
+        { pattern: /(\d+)\s*(?:bed|room|unit)s?\s*hmo/i, type: 'hmo', cat: 'residential', label: 'HMO' },
         { pattern: /\bhmo\b|house in multiple|house of multiple/i, type: 'hmo', cat: 'residential', label: 'HMO' },
         { pattern: /\bmufb\b|multi.?unit|block of flats|freehold block/i, type: 'mufb', cat: 'residential', label: 'MUFB' },
-        { pattern: /holiday.?let|airbnb|short.?term.?let|serviced.?accommodation|sa\b/i, type: 'holiday_let', cat: 'residential', label: 'Holiday Let' },
+        { pattern: /holiday.?let|airbnb|short.?term.?let|serviced.?accommodation|\bsa\b/i, type: 'holiday_let', cat: 'residential', label: 'Holiday Let' },
         { pattern: /warehouse|storage unit|distribution/i, type: 'warehouse', cat: 'commercial', label: 'Warehouse' },
         { pattern: /industrial|factory|workshop|manufacturing/i, type: 'industrial', cat: 'commercial', label: 'Industrial' },
         { pattern: /\bretail\b|shop\b|store\b|high street/i, type: 'retail', cat: 'commercial', label: 'Retail' },
@@ -308,8 +372,11 @@
         { pattern: /\bpub\b|restaurant|cafe|hotel|b&b|guest house|hospitality/i, type: 'hospitality', cat: 'commercial', label: 'Hospitality' },
         { pattern: /student|pbsa|student accommodation/i, type: 'student', cat: 'commercial', label: 'Student' },
         { pattern: /mixed.?use|semi.?commercial|part.?commercial/i, type: 'mixed', cat: 'commercial', label: 'Mixed Use' },
+        // Shorthand: resi = residential, comm = commercial
+        { pattern: /\bcomm\b|commercial/i, type: 'commercial', cat: 'commercial', label: 'Commercial' },
+        { pattern: /\bresi\b|\bresidential\b/i, type: 'residential_investment', cat: 'residential', label: 'Residential' },
         { pattern: /\bbtl\b|buy.?to.?let|rental property|investment property/i, type: 'residential_investment', cat: 'residential', label: 'BTL' },
-        { pattern: /residential|flat\b|apartment|house\b|terrace|semi.?detached|detached/i, type: 'residential_investment', cat: 'residential', label: 'Residential' },
+        { pattern: /flat\b|apartment|house\b|terrace|semi.?detached|detached/i, type: 'residential_investment', cat: 'residential', label: 'Residential' },
       ];
       for (const p of propertyPatterns) {
         const match = text.match(p.pattern);
@@ -321,32 +388,59 @@
           break;
         }
       }
+      // Check for "X bed" which often indicates HMO
+      if (!result.propertyType) {
+        const bedMatch = text.match(/(\d+)\s*(?:bed|bedroom)s?/i);
+        if (bedMatch && parseInt(bedMatch[1]) >= 4) {
+          result.propertyType = 'hmo';
+          result.propertyCategory = 'residential';
+          result.propertyMatch = bedMatch[0] + ' (likely HMO)';
+          result.confidence.propertyType = 'medium';
+          result.questions.push('Is this an HMO?');
+        }
+      }
       if (!result.propertyType && lower.includes('commercial')) {
         result.propertyCategory = 'commercial';
         result.propertyMatch = 'commercial';
         result.questions.push('What type of commercial property?');
       }
 
-      // ============ VALUATION DETECTION (improved) ============
-      // Priority patterns for value
+      // ============ VALUATION DETECTION (improved - context aware) ============
+      // Helper to parse amount with k/m suffix
+      const parseAmount = (numStr, suffix) => {
+        let val = parseFloat(numStr.replace(/,/g, ''));
+        const s = (suffix || '').toLowerCase();
+        if (s.startsWith('m') && val < 100) val *= 1000000;
+        else if (s === 'k' && val < 10000) val *= 1000;
+        else if (val > 100 && val < 1000) val *= 1000; // Assume "500" means 500k
+        return val;
+      };
+
+      // First, find ALL monetary amounts and categorize them
+      const allAmounts = [];
+      const amountRegex = /[£]?([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?(?:\s*(p\.?[ac]\.?m?|pcm|pa|per month|per annum|monthly|annual))?/gi;
+      let amountMatch;
+      while ((amountMatch = amountRegex.exec(text)) !== null) {
+        const val = parseAmount(amountMatch[1], amountMatch[2]);
+        const timeIndicator = (amountMatch[3] || '').toLowerCase();
+        const isRentIndicator = timeIndicator.includes('pcm') || timeIndicator.includes('pm') || timeIndicator.includes('pa') ||
+                                timeIndicator.includes('month') || timeIndicator.includes('annum');
+        allAmounts.push({ val, match: amountMatch[0], isRentIndicator, index: amountMatch.index });
+      }
+
+      // Priority patterns for VALUATION (not rent)
       const valuePatterns = [
         { pattern: /(?:o\.?m\.?v|current value|market value|valuation|valued at)[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i, type: 'OMV' },
         { pattern: /(?:worth|value)[:\s]*(?:around |approx(?:imately)? |about )?[£]?([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i, type: 'value' },
         { pattern: /(?:gdv|gross development value)[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i, type: 'GDV' },
         { pattern: /(?:purchase(?:d| for)?|bought for|agreed|asking)[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i, type: 'purchase' },
-        { pattern: /[£]([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?\s*(?:property|value|valuation)/i, type: 'value' },
-        { pattern: /property[:\s]*[£]?([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i, type: 'value' },
+        { pattern: /[£]([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?\s*(?:property|house|flat|value|valuation)/i, type: 'value' },
       ];
 
       for (const vp of valuePatterns) {
         const match = text.match(vp.pattern);
         if (match) {
-          let val = parseFloat(match[1].replace(/,/g, ''));
-          const suffix = (match[2] || '').toLowerCase();
-          if (suffix.startsWith('m') && val < 100) val *= 1000000;
-          else if (suffix === 'k' && val < 10000) val *= 1000;
-          else if (val > 100 && val < 1000) val *= 1000; // Assume "500" means 500k
-
+          const val = parseAmount(match[1], match[2]);
           if (val >= 100000 && val <= 100000000) {
             result.valuation = val;
             result.valuationMatch = match[0];
@@ -359,20 +453,16 @@
         }
       }
 
-      // Fallback: look for any large £ amount
+      // Smart fallback: find largest amount that ISN'T a rent indicator
       if (!result.valuation) {
-        const fallbackMatch = text.match(/[£]([\d,]+(?:\.\d+)?)\s*(m(?:illion)?|k)?/i);
-        if (fallbackMatch) {
-          let val = parseFloat(fallbackMatch[1].replace(/,/g, ''));
-          const suffix = (fallbackMatch[2] || '').toLowerCase();
-          if (suffix.startsWith('m') && val < 100) val *= 1000000;
-          else if (suffix === 'k' && val < 10000) val *= 1000;
-          if (val >= 150000 && val <= 50000000) {
-            result.valuation = val;
-            result.valuationMatch = fallbackMatch[0];
-            result.confidence.valuation = 'low';
-            result.questions.push('Is ' + fallbackMatch[0] + ' the property value?');
-          }
+        const nonRentAmounts = allAmounts.filter(a => !a.isRentIndicator && a.val >= 100000 && a.val <= 50000000);
+        if (nonRentAmounts.length > 0) {
+          // Take the largest amount as likely valuation
+          const largest = nonRentAmounts.reduce((a, b) => a.val > b.val ? a : b);
+          result.valuation = largest.val;
+          result.valuationMatch = largest.match;
+          result.confidence.valuation = 'medium';
+          result.questions.push('Is ' + largest.match + ' the property value?');
         }
       }
 
@@ -469,17 +559,27 @@
         }
       }
 
-      // ============ PRODUCT DETECTION ============
-      if (lower.match(/\bbridge|bridging|short.?term\b/)) {
+      // ============ PRODUCT DETECTION (improved with shorthand) ============
+      // Bridge indicators
+      if (lower.match(/\bbridge|bridging|short.?term|quick|urgent|auction|chain.?break/)) {
         result.loanPurpose = 'bridge';
-        result.purposeMatch = text.match(/bridge|bridging|short.?term/i)?.[0];
-      } else if (lower.match(/\bmortgage|long.?term|btl|buy.?to.?let|term.?loan\b/)) {
+        result.purposeMatch = text.match(/bridge|bridging|short.?term|quick|urgent|auction|chain.?break/i)?.[0];
+      }
+      // Mortgage / term loan indicators
+      else if (lower.match(/\bmortgage|long.?term|btl|buy.?to.?let|term.?loan|refi|refinance|remortgage/)) {
         result.loanPurpose = 'mortgage';
-        result.purposeMatch = text.match(/mortgage|long.?term|btl|buy.?to.?let|term.?loan/i)?.[0];
-      } else if (result.termMonths) {
-        // Infer from term
+        result.purposeMatch = text.match(/mortgage|long.?term|btl|buy.?to.?let|term.?loan|refi|refinance|remortgage/i)?.[0];
+      }
+      // Check for term-based inference
+      else if (result.termMonths) {
         result.loanPurpose = result.termMonths <= 24 ? 'bridge' : 'mortgage';
         result.confidence.loanPurpose = 'inferred';
+      }
+      // Check for rent which suggests mortgage/BTL
+      else if (result.rent && !result.loanPurpose) {
+        result.loanPurpose = 'mortgage';
+        result.confidence.loanPurpose = 'inferred';
+        result.questions.push('Rent detected - is this a BTL mortgage?');
       }
 
       // ============ BORROWER TYPE DETECTION ============
@@ -563,6 +663,8 @@
       const [openSection, setOpenSection] = useState('enquiry');
       const [freeText, setFreeText] = useState('');
       const [parsed, setParsed] = useState(null); // Stores parsed result for feedback panel
+      const [showQuoteModal, setShowQuoteModal] = useState(false); // Quote popup modal
+      const [quoteCopied, setQuoteCopied] = useState(false); // Copy feedback
 
       // Location, time, weather, date state
       const [contextInfo, setContextInfo] = useState({
@@ -653,9 +755,9 @@
         corePlusLoading: { lightRefurb: false, heavyRefurb: false, adverse: false, offshore: false, charity: false },
         // Loan override - optional, leave blank for max
         loanOverride: '',
-        // For email quote
-        brokerName: '',
-        propertyAddress: '',
+        // For who's quoting (optional section at top)
+        brokerCompany: '',
+        completedBy: '',
       });
 
       const sectionRefs = {
@@ -673,8 +775,10 @@
 
       const updateData = (key, value) => setData(prev => ({ ...prev, [key]: value }));
 
-      const nextSection = (current) => {
-        const flow = data.loanPurpose === 'mortgage'
+      const nextSection = (current, overrideLoanPurpose = null) => {
+        // Use override if provided (for when state hasn't updated yet), otherwise use current data
+        const loanPurpose = overrideLoanPurpose || data.loanPurpose;
+        const flow = loanPurpose === 'mortgage'
           ? ['enquiry', 'location', 'property', 'valuation', 'product', 'rental', 'borrower', 'credit', 'terms', 'result']
           : ['enquiry', 'location', 'property', 'valuation', 'product', 'borrower', 'credit', 'terms', 'result']; // Bridge & Core Plus skip rental
         const idx = flow.indexOf(current);
@@ -690,6 +794,18 @@
         if (!freeText.trim()) return;
         const result = parseEnquiry(freeText);
         setParsed(result); // Store for feedback panel
+
+        // Track parser usage
+        const fieldsExtracted = [
+          result.location ? 'location' : null,
+          result.propertyType ? 'propertyType' : null,
+          result.valuation ? 'valuation' : null,
+          result.loanPurpose ? 'loanPurpose' : null,
+          result.borrowerType ? 'borrowerType' : null,
+          result.rent ? 'rent' : null,
+          result.termMonths ? 'term' : null,
+        ].filter(Boolean).join(',');
+        if (window.trackEvent) window.trackEvent.parserUsed(fieldsExtracted.length > 0, fieldsExtracted);
 
         // Apply parsed values to form
         if (result.location) updateData('location', result.location);
@@ -1087,15 +1203,238 @@
         return base;
       };
 
+      // Generate quote text for copying/sharing
+      const generateQuoteText = () => {
+        const productName = data.loanPurpose === 'bridge' ? 'TAB Bridge (Core)'
+          : data.loanPurpose === 'corePlus' ? 'TAB Bridge (Core Plus)'
+          : 'TAB Mortgage';
+
+        const quote = calculations.quoteBridge || calculations.quoteCorePlus || calculations.quoteStandard;
+
+        let text = `TAB LOAN ENQUIRY
+═══════════════════════════════════════
+
+Date: ${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+Time: ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+
+        // Add broker info if provided
+        if (data.completedBy || data.brokerCompany) {
+          text += `\nQuoted by: ${data.completedBy || '-'}${data.brokerCompany ? ` (${data.brokerCompany})` : ''}`;
+        }
+
+        text += `
+
+PROPERTY DETAILS
+────────────────────────────────────────
+Address: ${data.address || '[PROPERTY ADDRESS]'}
+Type: ${config.propertyTypes?.find(p => p.value === data.propertyType)?.label || data.propertyType || '-'}
+Category: ${data.propertyCategory === 'commercial' ? 'Commercial' : 'Residential'}
+Valuation: ${fmt.currency(calculations.valuation)}
+Location: ${config.locations?.accepted?.find(l => l.value === data.location)?.label || data.location || '-'}
+
+BORROWER DETAILS
+────────────────────────────────────────
+Name: ${data.borrowerName || '-'}
+Type: ${config.borrowerTypes?.find(b => b.value === data.borrowerType)?.label || data.borrowerType || '-'}
+Credit: ${data.creditClean ? 'Clean - criteria met' : 'Adverse - refer'}
+
+LOAN DETAILS
+────────────────────────────────────────
+Product: ${productName}
+Term: ${calculations.term} months${data.loanPurpose === 'mortgage' ? ` (${Math.round(calculations.term/12)} years)` : ''}
+`;
+
+        if (data.loanPurpose === 'mortgage' && calculations.quoteStandard) {
+          text += `
+TAB MORTGAGE (STANDARD)
+────────────────────────────────────────
+Gross Loan: ${fmt.currency(calculations.quoteStandard.grossLoan)}
+LTV: ${calculations.quoteStandard.ltv.toFixed(1)}%
+Interest Rate: ${fmt.percent(calculations.quoteStandard.payRate)} (${fmt.percent(calculations.quoteStandard.payRate / 12)}/mo)
+
+Fees:
+  Arrangement (2%): ${fmt.currency(calculations.quoteStandard.arrangementFee)}
+  Admin: ${fmt.currency(calculations.quoteStandard.adminFee)}
+  Valuation: ${fmt.currency(calculations.quoteStandard.valuationFee)}
+
+Net Advance: ${fmt.currency(calculations.quoteStandard.servicedNet)}
+Monthly Payment: ${fmt.currencyFull(calculations.quoteStandard.monthlyInterest)}
+Exit Fee: ${fmt.percent(calculations.quoteStandard.exitFeePercent)}
+ICR: ${calculations.quoteStandard.icr.toFixed(2)}x
+`;
+        }
+
+        if (data.loanPurpose === 'mortgage' && calculations.quotePro) {
+          text += `
+TAB MORTGAGE PRO
+────────────────────────────────────────
+Gross Loan: ${fmt.currency(calculations.quotePro.grossLoan)}
+LTV: ${calculations.quotePro.ltv.toFixed(1)}%
+Effective Rate: ${fmt.percent(calculations.quotePro.effectiveRate)} (${fmt.percent(calculations.quotePro.effectiveRate / 12)}/mo)
+
+Fees:
+  Arrangement (2%): ${fmt.currency(calculations.quotePro.arrangementFee)}
+  Admin: ${fmt.currency(calculations.quotePro.adminFee)}
+  Valuation: ${fmt.currency(calculations.quotePro.valuationFee)}
+  Prepaid Interest: ${fmt.currency(calculations.quotePro.prepaidInterest)}
+
+Net Advance: ${fmt.currency(calculations.quotePro.servicedNet)}
+Monthly Payment: ${fmt.currencyFull(calculations.quotePro.monthlyInterest)}
+Exit Fee: ${fmt.percent(calculations.quotePro.exitFeePercent)}
+ICR: ${calculations.quotePro.icr.toFixed(2)}x
+`;
+        }
+
+        if (data.loanPurpose === 'bridge' && calculations.quoteBridge) {
+          text += `
+Gross Loan: ${fmt.currency(calculations.quoteBridge.grossLoan)}
+LTV: ${calculations.quoteBridge.ltv.toFixed(1)}%
+Interest Rate: ${fmt.percent(calculations.quoteBridge.payRate)} (${fmt.percent(calculations.quoteBridge.payRate / 12)}/mo)
+
+Fees:
+  Arrangement (2%): ${fmt.currency(calculations.quoteBridge.arrangementFee)}
+  Admin: ${fmt.currency(calculations.quoteBridge.adminFee)}
+  Valuation: ${fmt.currency(calculations.quoteBridge.valuationFee)}
+
+SERVICED (pay monthly):
+  Net Advance: ${fmt.currency(calculations.quoteBridge.servicedNet)}
+  Monthly Payment: ${fmt.currencyFull(calculations.quoteBridge.monthlyInterest)}
+
+RETAINED (roll up interest):
+  Net Advance: ${fmt.currency(calculations.quoteBridge.retainedNet)}
+  Total Interest: ${fmt.currency(calculations.quoteBridge.totalInterest)}
+
+Exit Fee: None
+`;
+        }
+
+        if (data.loanPurpose === 'corePlus' && calculations.quoteCorePlus) {
+          text += `
+Gross Loan: ${fmt.currency(calculations.quoteCorePlus.grossLoan)}
+LTV: ${calculations.quoteCorePlus.ltv.toFixed(1)}%
+Interest Rate: ${fmt.percent(calculations.quoteCorePlus.ratePcm)} pcm (${fmt.percent(calculations.quoteCorePlus.rateAnnual)} pa)
+Charge: ${calculations.quoteCorePlus.isSecondCharge ? '2nd Charge' : '1st Charge'}
+${calculations.quoteCorePlus.rateLoading > 0 ? `Rate Loading: +${fmt.percent(calculations.quoteCorePlus.rateLoading)} pcm` : ''}
+
+Fees:
+  Arrangement (2%): ${fmt.currency(calculations.quoteCorePlus.arrangementFee)}
+  Admin: ${fmt.currency(calculations.quoteCorePlus.adminFee)}
+  Valuation: ${fmt.currency(calculations.quoteCorePlus.valuationFee)}
+
+SERVICED (pay monthly):
+  Net Advance: ${fmt.currency(calculations.quoteCorePlus.servicedNet)}
+  Monthly Payment: ${fmt.currencyFull(calculations.quoteCorePlus.monthlyInterest)}
+
+RETAINED (roll up interest):
+  Net Advance: ${fmt.currency(calculations.quoteCorePlus.retainedNet)}
+  Total Interest: ${fmt.currency(calculations.quoteCorePlus.totalInterest)}
+
+Exit Fee: None
+`;
+        }
+
+        if (data.rent && data.loanPurpose === 'mortgage') {
+          text += `
+RENTAL INCOME
+────────────────────────────────────────
+Monthly Rent: ${fmt.currency(parseFloat(data.rent))}
+Annual Rent: ${fmt.currency(parseFloat(data.rent) * 12)}
+`;
+        }
+
+        text += `
+═══════════════════════════════════════
+Generated by TAB Loan Calculator v20
+Please send to: enquiries@tabhq.com
+═══════════════════════════════════════`;
+
+        return text;
+      };
+
+      // Copy quote to clipboard
+      const copyQuote = () => {
+        const quoteText = generateQuoteText();
+
+        // Track quote copied event
+        const loanAmount = calculations.quoteStandard?.grossLoan || calculations.quoteBridge?.grossLoan || calculations.quoteCorePlus?.grossLoan || 0;
+        if (window.trackEvent) window.trackEvent.quoteCopied(data.loanPurpose, loanAmount);
+
+        navigator.clipboard.writeText(quoteText).then(() => {
+          setQuoteCopied(true);
+          setTimeout(() => setQuoteCopied(false), 2000);
+        }).catch(() => {
+          // Fallback for older browsers
+          const textArea = document.createElement('textarea');
+          textArea.value = quoteText;
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textArea);
+          setQuoteCopied(true);
+          setTimeout(() => setQuoteCopied(false), 2000);
+        });
+      };
+
+      // Share via WhatsApp
+      const shareWhatsApp = () => {
+        const quoteText = generateQuoteText();
+        const encodedText = encodeURIComponent(quoteText);
+        window.open(`https://wa.me/?text=${encodedText}`, '_blank');
+
+        // Track share event
+        const loanAmount = calculations.quoteStandard?.grossLoan || calculations.quoteBridge?.grossLoan || calculations.quoteCorePlus?.grossLoan || 0;
+        if (window.trackEvent) window.trackEvent.quoteCopied(data.loanPurpose, loanAmount); // Reuse copied event for now
+      };
+
       return (
         <div style={{ minHeight: '100vh', background: colors.cream }}>
+          {/* Quote Modal */}
+          {showQuoteModal && (
+            <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }} onClick={() => setShowQuoteModal(false)}>
+              <div style={{ background: colors.white, borderRadius: '16px', maxWidth: '500px', width: '100%', maxHeight: '80vh', overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }} onClick={e => e.stopPropagation()}>
+                {/* Modal Header */}
+                <div style={{ background: colors.orange, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: '18px', fontWeight: '700', color: colors.white }}>📋 Quote Ready</div>
+                    <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.8)' }}>Copy or share your quote</div>
+                  </div>
+                  <button onClick={() => setShowQuoteModal(false)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', width: '32px', height: '32px', borderRadius: '8px', color: colors.white, fontSize: '18px', cursor: 'pointer' }}>×</button>
+                </div>
+
+                {/* Quote Preview */}
+                <div style={{ padding: '16px 20px', maxHeight: '40vh', overflowY: 'auto', background: colors.cream }}>
+                  <pre style={{ margin: 0, fontSize: '11px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', lineHeight: '1.4', color: colors.dark }}>{generateQuoteText()}</pre>
+                </div>
+
+                {/* Action Buttons */}
+                <div style={{ padding: '16px 20px', borderTop: `1px solid ${colors.creamDark}`, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {/* Copy Button */}
+                  <button onClick={copyQuote} style={{ width: '100%', padding: '14px', background: quoteCopied ? colors.green : colors.orange, color: colors.white, border: 'none', borderRadius: '10px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: 'background 0.3s' }}>
+                    {quoteCopied ? '✓ Copied!' : '📋 Copy to Clipboard'}
+                  </button>
+
+                  {/* WhatsApp Button */}
+                  <button onClick={shareWhatsApp} style={{ width: '100%', padding: '14px', background: '#25D366', color: colors.white, border: 'none', borderRadius: '10px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
+                    Share via WhatsApp
+                  </button>
+
+                  {/* Email hint */}
+                  <div style={{ fontSize: '12px', color: colors.grey, textAlign: 'center', marginTop: '4px' }}>
+                    Send quote to: <strong>enquiries@tabhq.com</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Header */}
           <header style={{ background: colors.orange, padding: '16px 20px', position: 'sticky', top: 0, zIndex: 100 }}>
             <div style={{ maxWidth: '600px', margin: '0 auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div style={{ width: '40px', height: '40px', background: colors.white, borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '700', color: colors.orange }}>TAB</div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: '18px', fontWeight: '700', color: colors.white }}>Loan Calculator</div>
-                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.8)' }}>v18 • BoE {config.boeBaseRate}%</div>
+                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.8)' }}>v20 • BoE {config.boeBaseRate}%</div>
               </div>
               <button onClick={() => setShowAdmin(!showAdmin)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', padding: '8px 12px', borderRadius: '8px', color: colors.white, fontSize: '12px', cursor: 'pointer' }}>⚙️</button>
             </div>
@@ -1196,17 +1535,43 @@
               onToggle={() => setOpenSection(openSection === 'enquiry' ? null : 'enquiry')}
               scrollRef={sectionRefs.enquiry}
             >
+              {/* Who's Quoting - Optional Info */}
+              <div style={{ marginBottom: '16px', padding: '14px', background: colors.cream, borderRadius: '10px', border: `1px dashed ${colors.greyLight}` }}>
+                <div style={{ fontSize: '12px', color: colors.grey, marginBottom: '10px' }}>
+                  📝 <strong>Who's quoting?</strong> <span style={{ fontStyle: 'italic' }}>(Optional - the more info the better)</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <input
+                    type="text"
+                    value={data.completedBy}
+                    onChange={e => updateData('completedBy', e.target.value)}
+                    placeholder="Your name"
+                    style={{ padding: '10px', fontSize: '13px', border: `1px solid ${colors.creamDark}`, borderRadius: '6px', outline: 'none' }}
+                  />
+                  <input
+                    type="text"
+                    value={data.brokerCompany}
+                    onChange={e => updateData('brokerCompany', e.target.value)}
+                    placeholder="Company / Broker firm"
+                    style={{ padding: '10px', fontSize: '13px', border: `1px solid ${colors.creamDark}`, borderRadius: '6px', outline: 'none' }}
+                  />
+                </div>
+              </div>
+
               <div style={{ marginBottom: '16px' }}>
                 <textarea
                   value={freeText}
                   onChange={e => { setFreeText(e.target.value); setParsed(null); }}
-                  placeholder="Paste the broker enquiry email or describe the case in your own words...
+                  placeholder="Paste your enquiry here or describe the case in as much detail as possible...
+
+I'll try to extract: location, property type, valuation, rent, loan purpose, borrower type, and more.
 
 Examples:
 • BTL in Manchester, worth £450k, 5 year mortgage, rent £2,200 pcm, Ltd company
-• HMO in SE15 2AA, 6 beds at £650 each, valued 800k, individual borrower
-• Bridge needed - warehouse in Leeds, purchase price £1.2m, 12 months
-• Client wants to raise £300k against BTL in Bristol worth £500k, 70% LTV"
+• HMO in SE15 2AA, 6 beds at £650 each, valued 800k, individual
+• Bridge needed - warehouse in Leeds, £1.2m, 12 months
+
+💡 Tip: Copy-paste broker emails directly - I'll do my best to extract the key details. Double-check what I find!"
                   style={{
                     width: '100%',
                     minHeight: '140px',
@@ -1518,15 +1883,15 @@ Examples:
             {/* 4. Product - MOVED UP */}
             <Section title="4. Product" subtitle={data.loanPurpose === 'bridge' ? 'TAB Bridge (Core)' : data.loanPurpose === 'corePlus' ? 'TAB Bridge (Core Plus)' : data.loanPurpose === 'mortgage' ? 'TAB Mortgage' : 'Select product'} status={getStatus('product')} isOpen={openSection === 'product'} onToggle={() => setOpenSection(openSection === 'product' ? null : 'product')} scrollRef={sectionRefs.product}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <OptionButton selected={data.loanPurpose === 'bridge'} onClick={() => { updateData('loanPurpose', 'bridge'); updateData('termMonths', '12'); nextSection('product'); }}>
-                  <div style={{ fontWeight: '600', color: colors.orange, marginBottom: '4px' }}>TAB Bridge (Core)</div>
+                <OptionButton selected={data.loanPurpose === 'bridge'} onClick={() => { updateData('loanPurpose', 'bridge'); updateData('termMonths', '12'); if (window.trackEvent) window.trackEvent.productSelected('bridge', data.propertyCategory); nextSection('product', 'bridge'); }}>
+  <div style={{ fontWeight: '600', color: colors.orange, marginBottom: '4px' }}>TAB Bridge (Core)</div>
                   <div style={{ fontSize: '12px', color: colors.grey }}>1-24 months • Rate = Margin + Base • No exit fee</div>
                 </OptionButton>
-                <OptionButton selected={data.loanPurpose === 'corePlus'} onClick={() => { updateData('loanPurpose', 'corePlus'); updateData('termMonths', '12'); setOpenSection('corePlusOptions'); }}>
+                <OptionButton selected={data.loanPurpose === 'corePlus'} onClick={() => { updateData('loanPurpose', 'corePlus'); updateData('termMonths', '12'); if (window.trackEvent) window.trackEvent.productSelected('corePlus', data.propertyCategory); setOpenSection('corePlusOptions'); }}>
                   <div style={{ fontWeight: '600', color: colors.teal, marginBottom: '4px' }}>TAB Bridge (Core Plus)</div>
                   <div style={{ fontSize: '12px', color: colors.grey }}>1-24 months • Rate = % pcm • For works/complex deals</div>
                 </OptionButton>
-                <OptionButton selected={data.loanPurpose === 'mortgage'} onClick={() => { updateData('loanPurpose', 'mortgage'); updateData('termMonths', '36'); nextSection('product'); }}>
+                <OptionButton selected={data.loanPurpose === 'mortgage'} onClick={() => { updateData('loanPurpose', 'mortgage'); updateData('termMonths', '36'); if (window.trackEvent) window.trackEvent.productSelected('mortgage', data.propertyCategory); nextSection('product', 'mortgage'); }}>
                   <div style={{ fontWeight: '600', color: colors.green, marginBottom: '4px' }}>TAB Mortgage</div>
                   <div style={{ fontSize: '12px', color: colors.grey }}>3-5 years • ICR tested • Compares Standard vs Pro</div>
                 </OptionButton>
@@ -1885,7 +2250,16 @@ Examples:
             </Section>
 
             {/* 9. Result */}
-            <Section title={data.loanPurpose === 'bridge' ? '8. Quote' : '9. Quote'} subtitle={isEligible() ? 'Full quote' : 'Complete sections above'} status={getStatus('result')} isOpen={openSection === 'result'} onToggle={() => setOpenSection(openSection === 'result' ? null : 'result')} scrollRef={sectionRefs.result}>
+            <Section title={data.loanPurpose === 'bridge' ? '8. Quote' : '9. Quote'} subtitle={isEligible() ? 'Full quote' : 'Complete sections above'} status={getStatus('result')} isOpen={openSection === 'result'} onToggle={() => {
+              const opening = openSection !== 'result';
+              setOpenSection(opening ? 'result' : null);
+              // Track quote generated when result section is opened
+              if (opening && isEligible() && window.trackEvent) {
+                const loanAmount = calculations.quoteStandard?.grossLoan || calculations.quoteBridge?.grossLoan || calculations.quoteCorePlus?.grossLoan || 0;
+                const ltv = calculations.quoteStandard?.ltv || calculations.quoteBridge?.ltv || calculations.quoteCorePlus?.ltv || 0;
+                window.trackEvent.quoteGenerated(data.loanPurpose, loanAmount, ltv, data.propertyCategory, data.location);
+              }
+            }} scrollRef={sectionRefs.result}>
               {!isEligible() ? (
                 <div style={{ padding: '20px', background: '#FEF2F2', borderRadius: '10px', textAlign: 'center' }}>
                   <div style={{ fontWeight: '600', color: colors.red }}>Complete all sections above</div>
@@ -2302,194 +2676,34 @@ Examples:
                     </>
                   )}
 
-                  {/* Email Quote Section */}
+                  {/* Share Quote Section - Simple buttons */}
                   <div style={{ background: colors.white, borderRadius: '12px', padding: '16px', marginBottom: '16px', border: `2px solid ${colors.green}` }}>
-                    <div style={{ fontSize: '14px', fontWeight: '700', color: colors.green, marginBottom: '12px' }}>📧 Email This Quote</div>
+                    <div style={{ fontSize: '14px', fontWeight: '700', color: colors.green, marginBottom: '16px', textAlign: 'center' }}>📤 Share This Quote</div>
 
-                    <div style={{ marginBottom: '12px' }}>
-                      <label style={{ fontSize: '12px', color: colors.grey, display: 'block', marginBottom: '4px' }}>Broker Name</label>
-                      <input
-                        type="text"
-                        value={data.brokerName || ''}
-                        onChange={e => updateData('brokerName', e.target.value)}
-                        placeholder="Enter your name"
-                        style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '14px' }}
-                      />
-                    </div>
-
-                    <div style={{ marginBottom: '16px' }}>
-                      <label style={{ fontSize: '12px', color: colors.grey, display: 'block', marginBottom: '4px' }}>Property Address</label>
-                      <input
-                        type="text"
-                        value={data.propertyAddress || data.address || ''}
-                        onChange={e => updateData('propertyAddress', e.target.value)}
-                        placeholder="Full property address"
-                        style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '14px' }}
-                      />
-                    </div>
-
-                    <button onClick={() => {
-                      const productName = data.loanPurpose === 'bridge' ? 'TAB Bridge (Core)'
-                        : data.loanPurpose === 'corePlus' ? 'TAB Bridge (Core Plus)'
-                        : 'TAB Mortgage';
-
-                      const quote = calculations.quoteBridge || calculations.quoteCorePlus || calculations.quoteStandard;
-                      const quotePro = calculations.quotePro;
-
-                      let emailBody = `TAB LOAN ENQUIRY
-═══════════════════════════════════════
-
-Date: ${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-Time: ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-Broker: ${data.brokerName || '[BROKER NAME]'}
-
-PROPERTY DETAILS
-────────────────────────────────────────
-Address: ${data.propertyAddress || data.address || '[PROPERTY ADDRESS]'}
-Type: ${config.propertyTypes?.find(p => p.value === data.propertyType)?.label || data.propertyType || '-'}
-Category: ${data.propertyCategory === 'commercial' ? 'Commercial' : 'Residential'}
-Valuation: ${fmt.currency(calculations.valuation)}
-Location: ${config.locations?.accepted?.find(l => l.value === data.location)?.label || data.location || '-'}
-
-BORROWER DETAILS
-────────────────────────────────────────
-Name: ${data.borrowerName || '-'}
-Type: ${config.borrowerTypes?.find(b => b.value === data.borrowerType)?.label || data.borrowerType || '-'}
-Credit: ${data.creditClean ? 'Clean - criteria met' : 'Adverse - refer'}
-
-LOAN DETAILS
-────────────────────────────────────────
-Product: ${productName}
-Term: ${calculations.term} months${data.loanPurpose === 'mortgage' ? ` (${Math.round(calculations.term/12)} years)` : ''}
-`;
-
-                      if (data.loanPurpose === 'mortgage' && calculations.quoteStandard) {
-                        emailBody += `
-TAB MORTGAGE (STANDARD)
-────────────────────────────────────────
-Gross Loan: ${fmt.currency(calculations.quoteStandard.grossLoan)}
-LTV: ${calculations.quoteStandard.ltv.toFixed(1)}%
-Interest Rate: ${fmt.percent(calculations.quoteStandard.payRate)} (${fmt.percent(calculations.quoteStandard.payRate / 12)}/mo)
-
-Fees:
-  Arrangement (2%): ${fmt.currency(calculations.quoteStandard.arrangementFee)}
-  Admin: ${fmt.currency(calculations.quoteStandard.adminFee)}
-  Valuation: ${fmt.currency(calculations.quoteStandard.valuationFee)}
-
-Net Advance: ${fmt.currency(calculations.quoteStandard.servicedNet)}
-Monthly Payment: ${fmt.currencyFull(calculations.quoteStandard.monthlyInterest)}
-Exit Fee: ${fmt.percent(calculations.quoteStandard.exitFeePercent)}
-ICR: ${calculations.quoteStandard.icr.toFixed(2)}x
-`;
-                      }
-
-                      if (data.loanPurpose === 'mortgage' && calculations.quotePro) {
-                        emailBody += `
-TAB MORTGAGE PRO
-────────────────────────────────────────
-Gross Loan: ${fmt.currency(calculations.quotePro.grossLoan)}
-LTV: ${calculations.quotePro.ltv.toFixed(1)}%
-Effective Rate: ${fmt.percent(calculations.quotePro.effectiveRate)} (${fmt.percent(calculations.quotePro.effectiveRate / 12)}/mo)
-
-Fees:
-  Arrangement (2%): ${fmt.currency(calculations.quotePro.arrangementFee)}
-  Admin: ${fmt.currency(calculations.quotePro.adminFee)}
-  Valuation: ${fmt.currency(calculations.quotePro.valuationFee)}
-  Prepaid Interest: ${fmt.currency(calculations.quotePro.prepaidInterest)}
-
-Net Advance: ${fmt.currency(calculations.quotePro.servicedNet)}
-Monthly Payment: ${fmt.currencyFull(calculations.quotePro.monthlyInterest)}
-Exit Fee: ${fmt.percent(calculations.quotePro.exitFeePercent)}
-ICR: ${calculations.quotePro.icr.toFixed(2)}x
-`;
-                      }
-
-                      if (data.loanPurpose === 'bridge' && calculations.quoteBridge) {
-                        emailBody += `
-Gross Loan: ${fmt.currency(calculations.quoteBridge.grossLoan)}
-LTV: ${calculations.quoteBridge.ltv.toFixed(1)}%
-Interest Rate: ${fmt.percent(calculations.quoteBridge.payRate)} (${fmt.percent(calculations.quoteBridge.payRate / 12)}/mo)
-
-Fees:
-  Arrangement (2%): ${fmt.currency(calculations.quoteBridge.arrangementFee)}
-  Admin: ${fmt.currency(calculations.quoteBridge.adminFee)}
-  Valuation: ${fmt.currency(calculations.quoteBridge.valuationFee)}
-
-SERVICED (pay monthly):
-  Net Advance: ${fmt.currency(calculations.quoteBridge.servicedNet)}
-  Monthly Payment: ${fmt.currencyFull(calculations.quoteBridge.monthlyInterest)}
-
-RETAINED (roll up interest):
-  Net Advance: ${fmt.currency(calculations.quoteBridge.retainedNet)}
-  Total Interest: ${fmt.currency(calculations.quoteBridge.totalInterest)}
-
-Exit Fee: None
-`;
-                      }
-
-                      if (data.loanPurpose === 'corePlus' && calculations.quoteCorePlus) {
-                        emailBody += `
-Gross Loan: ${fmt.currency(calculations.quoteCorePlus.grossLoan)}
-LTV: ${calculations.quoteCorePlus.ltv.toFixed(1)}%
-Interest Rate: ${fmt.percent(calculations.quoteCorePlus.ratePcm)} pcm (${fmt.percent(calculations.quoteCorePlus.rateAnnual)} pa)
-Charge: ${calculations.quoteCorePlus.isSecondCharge ? '2nd Charge' : '1st Charge'}
-${calculations.quoteCorePlus.rateLoading > 0 ? `Rate Loading: +${fmt.percent(calculations.quoteCorePlus.rateLoading)} pcm` : ''}
-
-Fees:
-  Arrangement (2%): ${fmt.currency(calculations.quoteCorePlus.arrangementFee)}
-  Admin: ${fmt.currency(calculations.quoteCorePlus.adminFee)}
-  Valuation: ${fmt.currency(calculations.quoteCorePlus.valuationFee)}
-
-SERVICED (pay monthly):
-  Net Advance: ${fmt.currency(calculations.quoteCorePlus.servicedNet)}
-  Monthly Payment: ${fmt.currencyFull(calculations.quoteCorePlus.monthlyInterest)}
-
-RETAINED (roll up interest):
-  Net Advance: ${fmt.currency(calculations.quoteCorePlus.retainedNet)}
-  Total Interest: ${fmt.currency(calculations.quoteCorePlus.totalInterest)}
-
-Exit Fee: None
-`;
-                      }
-
-                      if (data.rent && data.loanPurpose === 'mortgage') {
-                        emailBody += `
-RENTAL INCOME
-────────────────────────────────────────
-Monthly Rent: ${fmt.currency(parseFloat(data.rent))}
-Annual Rent: ${fmt.currency(parseFloat(data.rent) * 12)}
-`;
-                      }
-
-                      emailBody += `
-═══════════════════════════════════════
-Generated by TAB Loan Calculator v18
-Please send to: enquiries@tabhq.com
-═══════════════════════════════════════`;
-
-                      navigator.clipboard.writeText(emailBody).then(() => {
-                        alert('Quote copied to clipboard!\\n\\nPaste into an email and send to:\\nenquiries@tabhq.com');
-                      }).catch(() => {
-                        // Fallback for older browsers
-                        const textArea = document.createElement('textarea');
-                        textArea.value = emailBody;
-                        document.body.appendChild(textArea);
-                        textArea.select();
-                        document.execCommand('copy');
-                        document.body.removeChild(textArea);
-                        alert('Quote copied to clipboard!\\n\\nPaste into an email and send to:\\nenquiries@tabhq.com');
-                      });
-                    }} style={{ width: '100%', padding: '16px', background: colors.green, color: colors.white, border: 'none', borderRadius: '10px', fontSize: '15px', fontWeight: '600', cursor: 'pointer' }}>
-                      📋 Copy Quote & Email to enquiries@tabhq.com
+                    {/* Big Copy Button */}
+                    <button onClick={copyQuote} style={{ width: '100%', padding: '18px', background: quoteCopied ? colors.green : colors.orange, color: colors.white, border: 'none', borderRadius: '10px', fontSize: '16px', fontWeight: '700', cursor: 'pointer', marginBottom: '10px', transition: 'all 0.3s' }}>
+                      {quoteCopied ? '✓ Copied to Clipboard!' : '📋 Copy Quote to Clipboard'}
                     </button>
 
-                    <div style={{ marginTop: '10px', fontSize: '11px', color: colors.grey, textAlign: 'center' }}>
-                      Copies full quote details to clipboard. Paste into your email app.
+                    {/* WhatsApp Button */}
+                    <button onClick={shareWhatsApp} style={{ width: '100%', padding: '16px', background: '#25D366', color: colors.white, border: 'none', borderRadius: '10px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '12px' }}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
+                      Share via WhatsApp
+                    </button>
+
+                    <div style={{ fontSize: '12px', color: colors.grey, textAlign: 'center', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px' }}>
+                      <span>Email to: <strong>enquiries@tabhq.com</strong></span>
+                      <span style={{ color: colors.creamDark }}>|</span>
+                      <button onClick={() => setShowQuoteModal(true)} style={{ background: 'none', border: 'none', color: colors.orange, cursor: 'pointer', textDecoration: 'underline', fontSize: '12px' }}>Preview quote</button>
                     </div>
                   </div>
 
                   {/* Save as File */}
                   <button onClick={() => {
+                    // Track save event
+                    const loanAmount = calculations.quoteStandard?.grossLoan || calculations.quoteBridge?.grossLoan || calculations.quoteCorePlus?.grossLoan || 0;
+                    if (window.trackEvent) window.trackEvent.quoteSaved(data.loanPurpose, loanAmount);
+
                     let quote = `TAB QUOTE - ${new Date().toLocaleDateString('en-GB')}\n\nBorrower: ${data.borrowerName}\nProperty: ${data.address}\nValuation: ${fmt.currency(calculations.valuation)}\n`;
                     if (calculations.quoteStandard) {
                       quote += `\nTAB MORTGAGE\nGross: ${fmt.currency(calculations.quoteStandard.grossLoan)} | Net: ${fmt.currency(calculations.quoteStandard.servicedNet)}\nRate: ${fmt.percent(calculations.quoteStandard.payRate)} | Monthly: ${fmt.currencyFull(calculations.quoteStandard.monthlyInterest)}\n`;
@@ -2503,7 +2717,7 @@ Please send to: enquiries@tabhq.com
                     if (calculations.quoteCorePlus) {
                       quote += `\nTAB BRIDGE (CORE PLUS)\nGross: ${fmt.currency(calculations.quoteCorePlus.grossLoan)} @ ${fmt.percent(calculations.quoteCorePlus.ratePcm)} pcm\nNet (Serviced): ${fmt.currency(calculations.quoteCorePlus.servicedNet)} | Monthly: ${fmt.currencyFull(calculations.quoteCorePlus.monthlyInterest)}\nNet (Retained): ${fmt.currency(calculations.quoteCorePlus.retainedNet)}\n`;
                     }
-                    quote += `\n---\nTAB v18 | Created by DK`;
+                    quote += `\n---\nTAB v20 | Created by DK`;
                     const blob = new Blob([quote], { type: 'text/plain' });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
@@ -2521,7 +2735,7 @@ Please send to: enquiries@tabhq.com
 
           <footer style={{ padding: '20px', textAlign: 'center', fontSize: '11px', color: colors.greyLight }}>
             TAB loans are unregulated. Property at risk.<br/>
-            v18 • ICR: {config.icr.required}x @ Pay+{config.icr.stressAddOn}% • Created by DK
+            v20 • ICR: {config.icr.required}x @ Pay+{config.icr.stressAddOn}% • Created by DK
           </footer>
         </div>
       );
