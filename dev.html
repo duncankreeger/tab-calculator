@@ -82,10 +82,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&display=swap');
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: #F5F1EB; min-height: 100vh; color: #1a1a1a; }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: #0B0B0C; min-height: 100vh; color: #F5F5F4; }
     #root { min-height: 100vh; }
     html { scroll-behavior: smooth; }
+    input, select, textarea { color: #F5F5F4; }
+    input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.35); }
     .calc-layout { display: flex; gap: 24px; max-width: 940px; margin: 0 auto; align-items: flex-start; }
     .calc-main { flex: 1 1 auto; min-width: 0; max-width: 600px; width: 100%; }
     .notes-rail { flex: 0 0 300px; width: 300px; position: sticky; top: 92px; }
@@ -104,12 +107,14 @@
     const { useState, useMemo, useRef, useEffect } = React;
 
     const colors = {
-      orange: '#E65C00', orangeLight: '#F9731A', green: '#4A7C59', greenLight: '#5D9E6F',
-      cream: '#F5F1EB', creamDark: '#EBE5DB', dark: '#1a1a1a', grey: '#666666',
-      greyLight: '#999999', white: '#FFFFFF', red: '#DC2626', amber: '#F59E0B',
-      purple: '#7C3AED', purpleLight: '#A78BFA',
-      teal: '#0D9488', tealLight: '#14B8A6', // Core Plus color
+      orange: '#F97316', orangeLight: '#FB923C', green: '#5FB97E', greenLight: '#7BD49A',
+      cream: '#0B0B0C', creamDark: 'rgba(255,255,255,0.10)', dark: '#F5F5F4', grey: 'rgba(255,255,255,0.60)',
+      greyLight: 'rgba(255,255,255,0.38)', white: '#161618', red: '#F87171', amber: '#FBBF24',
+      purple: '#A78BFA', purpleLight: '#C4B5FD',
+      teal: '#34D399', tealLight: '#6EE7B7', // Core Plus color
+      ink: '#050506',
     };
+    const serif = "'Playfair Display', Georgia, 'Times New Roman', serif";
 
     // ===== Contextual notes (edit the wording here — plain text, no code) =====
     // One note per step. heading = short label, points = 1-3 short lines.
@@ -720,7 +725,7 @@
           <button onClick={onToggle} style={{ width: '100%', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
             <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: statusColors[status], color: colors.white, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '600' }}>{statusIcons[status]}</div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: '16px', fontWeight: '600', color: colors.dark }}>{title}</div>
+              <div style={{ fontSize: '18px', fontWeight: '600', color: colors.dark, fontFamily: serif }}>{title}</div>
               {subtitle && <div style={{ fontSize: '13px', color: colors.grey, marginTop: '2px' }}>{subtitle}</div>}
             </div>
             <div style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s', color: colors.grey }}>▼</div>
@@ -731,10 +736,10 @@
     }
 
     function OptionButton({ selected, onClick, children, variant = 'default', small }) {
-      let style = { width: '100%', padding: small ? '12px 16px' : '16px 20px', borderRadius: '10px', border: '2px solid', fontSize: small ? '13px' : '15px', fontWeight: '500', cursor: 'pointer', textAlign: 'left', background: colors.white, borderColor: colors.creamDark };
-      if (selected && variant === 'default') style = { ...style, borderColor: colors.green, background: '#F0FDF4' };
-      if (selected && variant === 'purple') style = { ...style, borderColor: colors.purple, background: '#EDE9FE' };
-      if (variant === 'danger' && selected) style = { ...style, borderColor: colors.red, background: '#FEF2F2' };
+      let style = { width: '100%', padding: small ? '12px 16px' : '16px 20px', borderRadius: '12px', border: '1px solid', fontSize: small ? '13px' : '15px', fontWeight: '500', cursor: 'pointer', textAlign: 'left', background: colors.white, borderColor: colors.creamDark, color: colors.dark, transition: 'all 0.15s' };
+      if (selected && variant === 'default') style = { ...style, borderColor: colors.green, background: 'rgba(95,185,126,0.16)' };
+      if (selected && variant === 'purple') style = { ...style, borderColor: colors.purple, background: 'rgba(167,139,250,0.16)' };
+      if (variant === 'danger' && selected) style = { ...style, borderColor: colors.red, background: 'rgba(248,113,113,0.16)' };
       return <button onClick={onClick} style={style}>{children}</button>;
     }
 
@@ -744,7 +749,7 @@
           {label && <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: colors.grey, marginBottom: '8px' }}>{label}</label>}
           <div style={{ position: 'relative' }}>
             {prefix && <span style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: colors.grey, fontSize: '16px' }}>{prefix}</span>}
-            <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{ width: '100%', padding: '14px 16px', paddingLeft: prefix ? '36px' : '16px', paddingRight: suffix ? '80px' : '16px', fontSize: '16px', fontWeight: '500', border: `2px solid ${colors.creamDark}`, borderRadius: '10px', outline: 'none', background: colors.white }} />
+            <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{ width: '100%', padding: '14px 16px', paddingLeft: prefix ? '36px' : '16px', paddingRight: suffix ? '80px' : '16px', fontSize: '16px', fontWeight: '500', border: `1px solid ${colors.creamDark}`, borderRadius: '12px', outline: 'none', background: colors.white, color: colors.dark }} />
             {suffix && <span style={{ position: 'absolute', right: '16px', top: '50%', transform: 'translateY(-50%)', color: colors.grey, fontSize: '14px' }}>{suffix}</span>}
           </div>
         </div>
@@ -1495,19 +1500,18 @@ Please send to: enquiries@tabhq.com
       return (
         <div style={{ minHeight: '100vh', background: colors.cream }}>
           {/* Header */}
-          <header style={{ background: colors.orange, padding: '16px 20px', position: 'sticky', top: 0, zIndex: 100 }}>
-            <div style={{ maxWidth: '600px', margin: '0 auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ width: '40px', height: '40px', background: colors.white, borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '700', color: colors.orange }}>TAB</div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '18px', fontWeight: '700', color: colors.white }}>Loan Calculator</div>
-                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.8)' }}>v2.2 dev • BoE {config.boeBaseRate}%</div>
-              </div>
-              <button onClick={() => setShowAdmin(!showAdmin)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', padding: '8px 12px', borderRadius: '8px', color: colors.white, fontSize: '12px', cursor: 'pointer' }}>⚙️</button>
+          <header style={{ background: colors.ink, position: 'sticky', top: 0, zIndex: 100, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ height: '3px', background: 'linear-gradient(90deg, #F97316, #F5F5F4, #5FB97E)' }}></div>
+            <div style={{ maxWidth: '600px', margin: '0 auto', padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ fontSize: '11px', letterSpacing: '0.14em', color: 'rgba(255,255,255,0.45)' }}>LOAN CALCULATOR</div>
+              <div style={{ fontFamily: serif, fontSize: '22px', fontWeight: '600', color: colors.dark, letterSpacing: '0.02em' }}>TAB.</div>
+              <button onClick={() => setShowAdmin(!showAdmin)} style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', padding: '7px 11px', borderRadius: '8px', color: colors.dark, fontSize: '12px', cursor: 'pointer' }}>⚙️</button>
             </div>
+            <div style={{ maxWidth: '600px', margin: '0 auto', padding: '0 20px 10px', fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>v2.2 dev • BoE {config.boeBaseRate}%</div>
           </header>
 
           {/* Context Info Bar - Location, Time, Date, Weather */}
-          <div style={{ background: colors.dark, padding: '10px 20px' }}>
+          <div style={{ background: colors.ink, padding: '10px 20px' }}>
             <div style={{ maxWidth: '600px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: 'rgba(255,255,255,0.9)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span>📍</span>
@@ -1527,7 +1531,7 @@ Please send to: enquiries@tabhq.com
 
           {/* Admin Panel */}
           {showAdmin && (
-            <div style={{ background: colors.dark, padding: '20px', color: colors.white }}>
+            <div style={{ background: colors.ink, padding: '20px', color: colors.white }}>
               <div style={{ maxWidth: '600px', margin: '0 auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                   <h3 style={{ margin: 0 }}>⚙️ Admin Settings</h3>
@@ -1851,9 +1855,9 @@ Examples:
 
                   {/* Warnings */}
                   {parsed.warnings.length > 0 && (
-                    <div style={{ marginTop: '12px', padding: '10px', background: '#FEF3C7', borderRadius: '8px', border: `1px solid ${colors.amber}` }}>
+                    <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(251,191,36,0.13)', borderRadius: '8px', border: `1px solid ${colors.amber}` }}>
                       {parsed.warnings.map((w, i) => (
-                        <div key={i} style={{ fontSize: '12px', color: '#92400E', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div key={i} style={{ fontSize: '12px', color: '#FBBF24', display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <span>⚠️</span> {w}
                         </div>
                       ))}
@@ -1862,7 +1866,7 @@ Examples:
 
                   {/* Questions */}
                   {parsed.questions.length > 0 && (
-                    <div style={{ marginTop: '12px', padding: '10px', background: '#EDE9FE', borderRadius: '8px', border: `1px solid ${colors.purple}` }}>
+                    <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(167,139,250,0.14)', borderRadius: '8px', border: `1px solid ${colors.purple}` }}>
                       <div style={{ fontSize: '11px', fontWeight: '600', color: colors.purple, marginBottom: '6px' }}>Still need to know:</div>
                       {parsed.questions.map((q, i) => (
                         <div key={i} style={{ fontSize: '12px', color: colors.purple }}>• {q}</div>
@@ -1925,7 +1929,7 @@ Examples:
                 ))}
               </div>
               {config.locations.rejected.some(l => l.value === data.location) && (
-                <div style={{ marginTop: '16px', padding: '14px', background: '#FEF2F2', borderRadius: '10px', border: `1px solid ${colors.red}` }}>
+                <div style={{ marginTop: '16px', padding: '14px', background: 'rgba(248,113,113,0.13)', borderRadius: '10px', border: `1px solid ${colors.red}` }}>
                   <div style={{ color: colors.red, fontWeight: '600' }}>⚠️ Out of Policy</div>
                   <div style={{ fontSize: '13px', color: colors.grey, marginTop: '4px' }}>TAB does not lend in this location. Cannot proceed.</div>
                 </div>
@@ -1964,8 +1968,8 @@ Examples:
                 const overLimit = val > maxVal;
 
                 return overLimit ? (
-                  <div style={{ padding: '14px', background: '#FEF3C7', borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.amber}` }}>
-                    <div style={{ color: '#92400E', fontWeight: '600' }}>⚠️ Above Standard Limit</div>
+                  <div style={{ padding: '14px', background: 'rgba(251,191,36,0.13)', borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.amber}` }}>
+                    <div style={{ color: '#FBBF24', fontWeight: '600' }}>⚠️ Above Standard Limit</div>
                     <div style={{ fontSize: '13px', color: colors.grey, marginTop: '4px' }}>
                       Max {isCommercial ? 'commercial' : 'residential'} value for {isLondon ? 'London' : 'this location'}: {fmt.currency(maxVal)}. May require referral.
                     </div>
@@ -2029,7 +2033,7 @@ Examples:
 
                 {/* 2nd Charge Balance Input */}
                 {data.corePlusCharge === 'second' && (
-                  <div style={{ marginBottom: '20px', padding: '14px', background: '#EDE9FE', borderRadius: '10px' }}>
+                  <div style={{ marginBottom: '20px', padding: '14px', background: 'rgba(167,139,250,0.14)', borderRadius: '10px' }}>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: colors.purple, marginBottom: '8px' }}>EXISTING 1ST CHARGE BALANCE</div>
                     <InputField label="" prefix="£" value={data.corePlusFirstChargeBalance} onChange={v => updateData('corePlusFirstChargeBalance', v)} placeholder="e.g. 200000" type="number" />
                     <div style={{ fontSize: '11px', color: colors.grey, marginTop: '4px' }}>
@@ -2151,7 +2155,7 @@ Examples:
                         </div>
 
                         {calculations.proAdvantage > 0 && (
-                          <div style={{ marginTop: '12px', padding: '14px', background: '#EDE9FE', borderRadius: '10px', textAlign: 'center' }}>
+                          <div style={{ marginTop: '12px', padding: '14px', background: 'rgba(167,139,250,0.14)', borderRadius: '10px', textAlign: 'center' }}>
                             <div style={{ fontSize: '15px', fontWeight: '700', color: colors.purple }}>💰 Borrow {fmt.currency(calculations.proAdvantage)} MORE with Mortgage Pro!</div>
                             <div style={{ fontSize: '11px', color: colors.grey, marginTop: '4px' }}>Lower stress rate = higher max loan for same rent</div>
                           </div>
@@ -2192,7 +2196,7 @@ Examples:
                     </div>
 
                     {calculations.rentSaving > 0 && (
-                      <div style={{ marginTop: '12px', padding: '14px', background: '#EDE9FE', borderRadius: '10px', textAlign: 'center' }}>
+                      <div style={{ marginTop: '12px', padding: '14px', background: 'rgba(167,139,250,0.14)', borderRadius: '10px', textAlign: 'center' }}>
                         <div style={{ fontSize: '15px', fontWeight: '700', color: colors.purple }}>💰 {fmt.currency(calculations.rentSaving)} LESS rent needed with Pro!</div>
                       </div>
                     )}
@@ -2226,7 +2230,7 @@ Examples:
                   <OptionButton key={bt.value} selected={data.borrowerType === bt.value} onClick={() => updateData('borrowerType', bt.value)} small>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                       <span>{bt.label}</span>
-                      {bt.note && <span style={{ fontSize: '10px', color: colors.amber, background: '#FEF3C7', padding: '2px 6px', borderRadius: '4px' }}>{bt.note}</span>}
+                      {bt.note && <span style={{ fontSize: '10px', color: colors.amber, background: 'rgba(251,191,36,0.13)', padding: '2px 6px', borderRadius: '4px' }}>{bt.note}</span>}
                     </div>
                   </OptionButton>
                 ))}
@@ -2256,7 +2260,7 @@ Examples:
                 </OptionButton>
               </div>
               {data.creditClean === false && (
-                <div style={{ marginTop: '16px', padding: '14px', background: '#FEF2F2', borderRadius: '10px', border: `1px solid ${colors.red}` }}>
+                <div style={{ marginTop: '16px', padding: '14px', background: 'rgba(248,113,113,0.13)', borderRadius: '10px', border: `1px solid ${colors.red}` }}>
                   <div style={{ color: colors.red, fontWeight: '600' }}>⚠️ Out of Policy</div>
                   <div style={{ fontSize: '13px', color: colors.grey, marginTop: '4px' }}>Adverse credit criteria not met. Cannot proceed with quote.</div>
                 </div>
@@ -2372,13 +2376,13 @@ Examples:
               }
             }} scrollRef={sectionRefs.result}>
               {!isEligible() ? (
-                <div style={{ padding: '20px', background: '#FEF2F2', borderRadius: '10px', textAlign: 'center' }}>
+                <div style={{ padding: '20px', background: 'rgba(248,113,113,0.13)', borderRadius: '10px', textAlign: 'center' }}>
                   <div style={{ fontWeight: '600', color: colors.red }}>Complete all sections above</div>
                 </div>
               ) : (
                 <>
                   {/* Disclaimer */}
-                  <div style={{ padding: '12px 16px', background: '#EDE9FE', borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.purple}` }}>
+                  <div style={{ padding: '12px 16px', background: 'rgba(167,139,250,0.14)', borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.purple}` }}>
                     <div style={{ fontSize: '12px', color: colors.purple }}>
                       <strong>ℹ️ Illustration Only:</strong> This quotation is for example purposes only. All information should be verified before producing formal terms.
                     </div>
@@ -2391,7 +2395,7 @@ Examples:
                     const isFlex = r.line === 'coreFlex';
                     const isRefer = !r.line;
                     const accent = isRefer ? colors.red : (isFlex ? colors.orange : colors.green);
-                    const bg = isRefer ? '#FEF2F2' : (isFlex ? '#FFF4EC' : '#F0FDF4');
+                    const bg = isRefer ? 'rgba(248,113,113,0.12)' : (isFlex ? 'rgba(249,115,22,0.12)' : 'rgba(95,185,126,0.12)');
                     return (
                       <div style={{ padding: '12px 16px', background: bg, borderRadius: '10px', marginBottom: '16px', border: `1px solid ${accent}` }}>
                         <div style={{ fontSize: '11px', letterSpacing: '0.08em', color: colors.grey, marginBottom: '4px' }}>RECOMMENDED FUNDING ROUTE</div>
@@ -2440,12 +2444,12 @@ Examples:
                               <div style={{ fontSize: '18px', fontWeight: '700', color: colors.green }}>{fmt.currency(calculations.quoteStandard.servicedNet)}</div>
                             </div>
 
-                            <div style={{ marginTop: '10px', padding: '8px', background: '#FEF3C7', borderRadius: '6px' }}>
-                              <div style={{ fontSize: '9px', color: '#92400E' }}>MONTHLY PAYMENT</div>
-                              <div style={{ fontSize: '14px', fontWeight: '600', color: '#92400E' }}>{fmt.currencyFull(calculations.quoteStandard.monthlyInterest)}</div>
+                            <div style={{ marginTop: '10px', padding: '8px', background: 'rgba(251,191,36,0.13)', borderRadius: '6px' }}>
+                              <div style={{ fontSize: '9px', color: '#FBBF24' }}>MONTHLY PAYMENT</div>
+                              <div style={{ fontSize: '14px', fontWeight: '600', color: '#FBBF24' }}>{fmt.currencyFull(calculations.quoteStandard.monthlyInterest)}</div>
                             </div>
 
-                            <div style={{ marginTop: '8px', padding: '6px', background: '#F0FDF4', borderRadius: '4px', fontSize: '10px', color: colors.green }}>
+                            <div style={{ marginTop: '8px', padding: '6px', background: 'rgba(95,185,126,0.14)', borderRadius: '4px', fontSize: '10px', color: colors.green }}>
                               ICR: {calculations.quoteStandard.icr.toFixed(2)}x ✓
                             </div>
                           </div>
@@ -2477,12 +2481,12 @@ Examples:
                               <div style={{ fontSize: '18px', fontWeight: '700', color: colors.purple }}>{fmt.currency(calculations.quotePro.servicedNet)}</div>
                             </div>
 
-                            <div style={{ marginTop: '10px', padding: '8px', background: '#FEF3C7', borderRadius: '6px' }}>
-                              <div style={{ fontSize: '9px', color: '#92400E' }}>MONTHLY PAYMENT</div>
-                              <div style={{ fontSize: '14px', fontWeight: '600', color: '#92400E' }}>{fmt.currencyFull(calculations.quotePro.monthlyInterest)}</div>
+                            <div style={{ marginTop: '10px', padding: '8px', background: 'rgba(251,191,36,0.13)', borderRadius: '6px' }}>
+                              <div style={{ fontSize: '9px', color: '#FBBF24' }}>MONTHLY PAYMENT</div>
+                              <div style={{ fontSize: '14px', fontWeight: '600', color: '#FBBF24' }}>{fmt.currencyFull(calculations.quotePro.monthlyInterest)}</div>
                             </div>
 
-                            <div style={{ marginTop: '8px', padding: '6px', background: '#EDE9FE', borderRadius: '4px', fontSize: '10px', color: colors.purple }}>
+                            <div style={{ marginTop: '8px', padding: '6px', background: 'rgba(167,139,250,0.14)', borderRadius: '4px', fontSize: '10px', color: colors.purple }}>
                               ICR: {calculations.quotePro.icr.toFixed(2)}x ✓
                             </div>
                           </div>
@@ -2490,7 +2494,7 @@ Examples:
                       </div>
 
                       {/* Winner / Comparison */}
-                      <div style={{ padding: '14px', background: '#EDE9FE', borderRadius: '10px', marginBottom: '16px' }}>
+                      <div style={{ padding: '14px', background: 'rgba(167,139,250,0.14)', borderRadius: '10px', marginBottom: '16px' }}>
                         <div style={{ fontSize: '14px', fontWeight: '700', color: colors.purple, textAlign: 'center', marginBottom: '10px' }}>
                           💰 MORTGAGE PRO ADVANTAGE
                         </div>
@@ -2576,7 +2580,7 @@ Examples:
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
                       {/* Retained */}
                       <div style={{ background: colors.white, borderRadius: '12px', overflow: 'hidden', border: `1px solid ${colors.creamDark}` }}>
-                        <div style={{ background: colors.dark, padding: '12px', color: colors.white, textAlign: 'center' }}>
+                        <div style={{ background: colors.ink, padding: '12px', color: colors.white, textAlign: 'center' }}>
                           <div style={{ fontSize: '12px', fontWeight: '600' }}>RETAINED</div>
                           <div style={{ fontSize: '9px', opacity: 0.8 }}>Interest rolled up</div>
                         </div>
@@ -2626,10 +2630,10 @@ Examples:
                             <div style={{ fontSize: '18px', fontWeight: '700', color: colors.green }}>{fmt.currency(calculations.quoteBridge.servicedNet)}</div>
                           </div>
 
-                          <div style={{ marginTop: '10px', padding: '8px', background: '#FEF3C7', borderRadius: '6px' }}>
-                            <div style={{ fontSize: '9px', color: '#92400E' }}>MONTHLY PAYMENT</div>
-                            <div style={{ fontSize: '14px', fontWeight: '600', color: '#92400E' }}>{fmt.currencyFull(calculations.quoteBridge.monthlyInterest)}</div>
-                            <div style={{ fontSize: '9px', color: '#92400E', marginTop: '2px' }}>× {calculations.term} months = {fmt.currency(calculations.quoteBridge.totalInterest)}</div>
+                          <div style={{ marginTop: '10px', padding: '8px', background: 'rgba(251,191,36,0.13)', borderRadius: '6px' }}>
+                            <div style={{ fontSize: '9px', color: '#FBBF24' }}>MONTHLY PAYMENT</div>
+                            <div style={{ fontSize: '14px', fontWeight: '600', color: '#FBBF24' }}>{fmt.currencyFull(calculations.quoteBridge.monthlyInterest)}</div>
+                            <div style={{ fontSize: '9px', color: '#FBBF24', marginTop: '2px' }}>× {calculations.term} months = {fmt.currency(calculations.quoteBridge.totalInterest)}</div>
                           </div>
                         </div>
                       </div>
@@ -2683,7 +2687,7 @@ Examples:
 
                       {/* Referral Warning */}
                       {calculations.quoteCorePlus.needsReferral && (
-                        <div style={{ padding: '12px 16px', background: '#FEF2F2', borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.red}` }}>
+                        <div style={{ padding: '12px 16px', background: 'rgba(248,113,113,0.13)', borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.red}` }}>
                           <div style={{ fontSize: '12px', color: colors.red }}>
                             <strong>⚠️ REFER TO CREDIT</strong> - LTV above rate card limit. Pricing subject to credit approval.
                           </div>
@@ -2692,8 +2696,8 @@ Examples:
 
                       {/* Rate Loading Banner */}
                       {calculations.quoteCorePlus.rateLoading > 0 && (
-                        <div style={{ padding: '12px 16px', background: '#FEF3C7', borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.amber}` }}>
-                          <div style={{ fontSize: '12px', color: '#92400E' }}>
+                        <div style={{ padding: '12px 16px', background: 'rgba(251,191,36,0.13)', borderRadius: '10px', marginBottom: '16px', border: `1px solid ${colors.amber}` }}>
+                          <div style={{ fontSize: '12px', color: '#FBBF24' }}>
                             <strong>⚠️ Rate Loading Applied:</strong>
                             {calculations.quoteCorePlus.hasLightRefurbLoading && ' Light Refurb (+0.10%)'}
                             {calculations.quoteCorePlus.hasHeavyRefurbLoading && ' Heavy Refurb (+0.20%)'}
@@ -2708,7 +2712,7 @@ Examples:
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
                         {/* Retained */}
                         <div style={{ background: colors.white, borderRadius: '12px', overflow: 'hidden', border: `1px solid ${colors.creamDark}` }}>
-                          <div style={{ background: colors.dark, padding: '12px', color: colors.white, textAlign: 'center' }}>
+                          <div style={{ background: colors.ink, padding: '12px', color: colors.white, textAlign: 'center' }}>
                             <div style={{ fontSize: '12px', fontWeight: '600' }}>RETAINED</div>
                             <div style={{ fontSize: '9px', opacity: 0.8 }}>Interest rolled up</div>
                           </div>
@@ -2763,7 +2767,7 @@ Examples:
                               <div style={{ fontSize: '18px', fontWeight: '700', color: colors.green }}>{fmt.currency(calculations.quoteCorePlus.servicedNet)}</div>
                             </div>
 
-                            <div style={{ marginTop: '10px', padding: '8px', background: '#F0FDFA', borderRadius: '6px' }}>
+                            <div style={{ marginTop: '10px', padding: '8px', background: 'rgba(52,211,153,0.13)', borderRadius: '6px' }}>
                               <div style={{ fontSize: '9px', color: colors.teal }}>MONTHLY PAYMENT</div>
                               <div style={{ fontSize: '14px', fontWeight: '600', color: colors.teal }}>{fmt.currencyFull(calculations.quoteCorePlus.monthlyInterest)}</div>
                               <div style={{ fontSize: '9px', color: colors.teal, marginTop: '2px' }}>× {calculations.term} months = {fmt.currency(calculations.quoteCorePlus.totalInterest)}</div>
