@@ -261,7 +261,26 @@
           { value: 'industrial', label: 'Industrial Unit' },
           { value: 'retail', label: 'Retail' },
           { value: 'office', label: 'Office' },
+          { value: 'operating_care', label: 'Operating Care Home' },
         ],
+      },
+      // ===== Funding lines (which capital source funds a loan) =====
+      fundingLines: [
+        { id: 'core', label: 'Core', funder: 'CarVal', rateLoading: 0, maxLoan: 5000000, maxAssetValue: 2500000, flatLtv: false },
+        { id: 'corePlus', label: 'Core Plus', funder: 'CarVal', rateLoading: 0, maxLoan: 5000000, maxAssetValue: 2500000, flatLtv: false },
+        { id: 'coreFlex', label: 'Core Flex', funder: 'GB Bank', rateLoading: 1.0, maxLoan: 10000000, maxAssetValue: 6000000, flatLtv: true },
+      ],
+      // ===== Asset x funding-line eligibility (edit in ⚙️ settings) =====
+      assetMatrix: {
+        residential_investment: { core: true, corePlus: true, coreFlex: true },
+        hmo: { core: true, corePlus: true, coreFlex: true },
+        mufb: { core: true, corePlus: true, coreFlex: true },
+        holiday_let: { core: true, corePlus: true, coreFlex: true },
+        warehouse: { core: true, corePlus: true, coreFlex: true },
+        industrial: { core: true, corePlus: true, coreFlex: true },
+        retail: { core: true, corePlus: true, coreFlex: true },
+        office: { core: true, corePlus: true, coreFlex: true },
+        operating_care: { core: false, corePlus: false, coreFlex: true },
       },
       borrowerTypes: [
         { value: 'individual', label: 'Individual', note: 'UK resident' },
@@ -1530,6 +1549,48 @@ Please send to: enquiries@tabhq.com
                     <label style={{ fontSize: '12px', color: colors.greyLight }}>Exit Fee (%)</label>
                     <input type="number" step="0.25" value={config.fees.mortgage.exit} onChange={e => { const newConfig = { ...config, fees: { ...config.fees, mortgage: { ...config.fees.mortgage, exit: parseFloat(e.target.value) || 2 } } }; setConfig(newConfig); saveConfig(newConfig); }} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: 'none', marginTop: '4px' }} />
                   </div>
+                </div>
+
+                {/* Funding eligibility matrix */}
+                <div style={{ marginTop: '28px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: '700', marginBottom: '4px' }}>Funding eligibility matrix</div>
+                  <div style={{ fontSize: '12px', color: colors.greyLight, marginBottom: '12px' }}>Tick which funding line can fund each asset. Routing picks the cheapest ticked line a deal fits.</div>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: 'left', padding: '8px', borderBottom: `1px solid ${colors.grey}` }}>Asset</th>
+                          {(config.fundingLines || []).map(line => (
+                            <th key={line.id} style={{ textAlign: 'center', padding: '8px', borderBottom: `1px solid ${colors.grey}`, whiteSpace: 'nowrap' }}>
+                              {line.label}
+                              <div style={{ fontSize: '10px', color: colors.greyLight, fontWeight: '400' }}>{line.funder}{line.rateLoading ? ` · +${line.rateLoading}%` : ''}</div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...config.propertyTypes.residential, ...config.propertyTypes.commercial].map(asset => (
+                          <tr key={asset.value}>
+                            <td style={{ padding: '8px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>{asset.label}</td>
+                            {(config.fundingLines || []).map(line => {
+                              const checked = !!(((config.assetMatrix || {})[asset.value] || {})[line.id]);
+                              return (
+                                <td key={line.id} style={{ textAlign: 'center', padding: '8px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                                  <input type="checkbox" checked={checked} onChange={e => {
+                                    const nextMatrix = { ...(config.assetMatrix || {}) };
+                                    nextMatrix[asset.value] = { ...(nextMatrix[asset.value] || {}), [line.id]: e.target.checked };
+                                    const newConfig = { ...config, assetMatrix: nextMatrix };
+                                    setConfig(newConfig); saveConfig(newConfig);
+                                  }} style={{ width: '18px', height: '18px', cursor: 'pointer' }} />
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button onClick={() => { if (navigator.clipboard) navigator.clipboard.writeText(JSON.stringify(config, null, 2)); }} style={{ marginTop: '12px', padding: '8px 14px', background: 'rgba(255,255,255,0.15)', color: colors.white, border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}>Copy config (JSON)</button>
                 </div>
 
                 {/* Reset Button */}
