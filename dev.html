@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>[DEV v2.2] TAB Loan Calculator</title>
+  <title>[DEV v2.3] TAB Loan Calculator</title>
   <meta name="description" content="Get instant bridging loan and BTL mortgage quotes. TAB's free calculator shows rates, fees, and net advance in seconds.">
   <meta name="robots" content="noindex, nofollow">
   <link rel="canonical" href="https://duncankreeger.github.io/tab-calculator/">
@@ -149,7 +149,7 @@
       );
     }
 
-    // ===== Routing engine (v2.2) — picks the cheapest funding line a deal fits =====
+    // ===== Routing engine (v2.3) — picks the cheapest funding line a deal fits =====
     // Eligibility (per-deal) drives routing. Concentration is flag-only.
     // NOTE: CarVal (core) asset eligibility is ASSUMED pending the Silva facility agreement.
     function getRouting(data, calculations, config) {
@@ -180,6 +180,87 @@
         }
         return { line: null, decision: 'refer', skipped, assetLabel };
       } catch (e) { return null; }
+    }
+
+    // ===== Rate card view (v2.3) — browsable rates from live config =====
+    function RateCard({ config, colors, serif, goCalc }) {
+      const [pt, setPt] = useState('residential');
+      const [charge, setCharge] = useState('1st');
+      const [loan, setLoan] = useState(500000);
+      const [ltv, setLtv] = useState(70);
+      const base = config.boeBaseRate;
+      const R = config.rates || {};
+      const pick = (bands, v, key) => { let out = bands && bands.length ? bands[bands.length - 1][key] : 0; if (bands) for (const b of bands) { if (v <= b.maxLtv) { out = b[key]; break; } } return out; };
+      const band = loan > 500000 ? 'bridgeOver500k' : 'bridgeUnder500k';
+      const flexLoad = (config.fundingLines?.find(l => l.id === 'coreFlex')?.rateLoading) || 1;
+      const coreA = base + pick(R[band]?.[pt], ltv, 'margin'), coreP = coreA / 12;
+      const flexA = coreA + flexLoad, flexP = flexA / 12;
+      const cpKey = charge === '1st' ? 'corePlus1st' : 'corePlus2nd';
+      const cpP = pick(R[cpKey]?.[pt], ltv, 'ratePcm'), cpA = cpP * 12;
+      const cpMax = (config.corePlusMaxLtv?.[charge === '1st' ? 'first' : 'second']?.[pt]) || 65;
+      const mA = base + pick(R.mortgage?.[pt], ltv, 'margin'), mP = mA / 12;
+      const bridgeMax = pt === 'residential' ? 75 : 70;
+      const flexMax = pt === 'residential' ? (loan > 5000000 ? 70 : 75) : 70;
+      const mMax = pt === 'residential' ? 75 : 70;
+      const gbp = n => '£' + Math.round(n).toLocaleString();
+      const rows = [
+        { n: 'Core', f: 'CarVal · bridge', c: colors.green, p: coreP, a: coreA, max: bridgeMax, maxLoan: 5 },
+        { n: 'Core Plus', f: charge + ' charge · works', c: colors.purple, p: cpP, a: cpA, max: cpMax, maxLoan: 5 },
+        { n: 'Core Flex', f: 'GB Bank · +' + flexLoad + '% pa', c: colors.orangeLight, p: flexP, a: flexA, max: flexMax, maxLoan: 10, star: true },
+        { n: 'Mortgage', f: '3–5 yr · ICR ' + config.icr.required + '×', c: colors.teal, p: mP, a: mA, max: mMax, maxLoan: 10 },
+      ];
+      const tog = active => ({ padding: '7px 12px', borderRadius: '999px', border: active ? `1px solid ${colors.orange}` : `1px solid ${colors.creamDark}`, background: active ? 'rgba(249,115,22,0.18)' : 'transparent', color: active ? colors.orangeLight : colors.grey, fontSize: '12px', cursor: 'pointer' });
+      return (
+        <main style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
+          <div style={{ background: colors.white, border: `1px solid ${colors.creamDark}`, borderRadius: '18px', padding: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px' }}>
+              <span style={{ fontFamily: serif, fontSize: '22px', color: colors.dark }}>Rate card</span>
+              <span style={{ fontSize: '11px', color: colors.grey }}>BoE base {base}%</span>
+            </div>
+            <div style={{ display: 'flex', gap: '20px', marginBottom: '14px', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: '10px', letterSpacing: '0.1em', color: colors.grey, marginBottom: '6px' }}>PROPERTY</div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button style={tog(pt === 'residential')} onClick={() => setPt('residential')}>Resi</button>
+                  <button style={tog(pt === 'commercial')} onClick={() => setPt('commercial')}>Comm</button>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '10px', letterSpacing: '0.1em', color: colors.grey, marginBottom: '6px' }}>CHARGE (Core Plus)</div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button style={tog(charge === '1st')} onClick={() => setCharge('1st')}>1st</button>
+                  <button style={tog(charge === '2nd')} onClick={() => setCharge('2nd')}>2nd</button>
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: '10px', letterSpacing: '0.1em', color: colors.grey, marginBottom: '6px' }}>LOAN AMOUNT</div>
+            <input type="number" value={loan} step="50000" onChange={e => setLoan(parseInt(e.target.value) || 0)} style={{ width: '100%', padding: '12px', fontSize: '15px', border: `1px solid ${colors.creamDark}`, borderRadius: '10px', background: colors.white, color: colors.dark, outline: 'none' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', letterSpacing: '0.1em', color: colors.grey, margin: '12px 0 4px' }}><span>LTV</span><span style={{ color: colors.orangeLight }}>{ltv}%</span></div>
+            <input type="range" min="40" max="75" step="5" value={ltv} onChange={e => setLtv(parseInt(e.target.value))} style={{ width: '100%', accentColor: colors.orange }} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px' }}>
+              {rows.map(r => {
+                const okLtv = ltv <= r.max, okLoan = loan <= r.maxLoan * 1000000, ok = okLtv && okLoan;
+                const monthly = loan * r.p / 100;
+                const reason = !okLtv ? ('LTV over ' + r.max + '%') : (!okLoan ? ('over £' + r.maxLoan + 'm') : '');
+                return (
+                  <div key={r.n} style={{ background: r.star ? 'rgba(249,115,22,0.10)' : colors.white, border: r.star ? '2px solid #BA7517' : `1px solid ${colors.creamDark}`, borderRadius: '14px', padding: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', opacity: ok ? 1 : 0.45 }}>
+                    <div>
+                      <div style={{ fontSize: '14px', fontWeight: '500', color: r.c }}>{r.n}</div>
+                      <div style={{ fontSize: '11px', color: colors.grey }}>{r.f} · max {r.max}%</div>
+                      {ok ? <button onClick={() => goCalc()} style={{ background: 'none', border: 'none', color: colors.orangeLight, fontSize: '12px', cursor: 'pointer', padding: '2px 0 0' }}>Quote →</button> : <div style={{ fontSize: '11px', color: colors.red, marginTop: '3px' }}>{reason}</div>}
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontFamily: serif, fontSize: '22px', color: colors.dark }}>{r.p.toFixed(2)}%<span style={{ fontSize: '11px', color: colors.grey }}>/mo</span></div>
+                      <div style={{ fontSize: '11px', color: colors.grey }}>{r.a.toFixed(2)}% pa · {ok ? gbp(monthly) + '/mo' : '—'}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: '11px', color: colors.greyLight, marginTop: '12px' }}>Rates from live config · indicative · verify before terms.</div>
+          </div>
+        </main>
+      );
     }
 
     const defaultConfig = {
@@ -760,6 +841,7 @@
     function App() {
       const [config, setConfig] = useState(loadConfig);
       const [showAdmin, setShowAdmin] = useState(false);
+      const [view, setView] = useState('calculator');
       const [openSection, setOpenSection] = useState('enquiry');
       const [freeText, setFreeText] = useState('');
       const [parsed, setParsed] = useState(null); // Stores parsed result for feedback panel
@@ -1443,7 +1525,7 @@ Annual Rent: ${fmt.currency(parseFloat(data.rent) * 12)}
 
         text += `
 ═══════════════════════════════════════
-Generated by TAB Loan Calculator v2.2
+Generated by TAB Loan Calculator v2.3
 Please send to: enquiries@tabhq.com
 ═══════════════════════════════════════`;
 
@@ -1507,8 +1589,16 @@ Please send to: enquiries@tabhq.com
               <div style={{ fontFamily: serif, fontSize: '22px', fontWeight: '600', color: colors.dark, letterSpacing: '0.02em' }}>TAB.</div>
               <button onClick={() => setShowAdmin(!showAdmin)} style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)', padding: '7px 11px', borderRadius: '8px', color: colors.dark, fontSize: '12px', cursor: 'pointer' }}>⚙️</button>
             </div>
-            <div style={{ maxWidth: '600px', margin: '0 auto', padding: '0 20px 10px', fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>v2.2 dev • BoE {config.boeBaseRate}%</div>
+            <div style={{ maxWidth: '600px', margin: '0 auto', padding: '0 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>v2.3 dev • BoE {config.boeBaseRate}%</span>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button onClick={() => setView('calculator')} style={{ padding: '6px 12px', borderRadius: '999px', border: view === 'calculator' ? '1px solid #F97316' : '1px solid rgba(255,255,255,0.14)', background: view === 'calculator' ? 'rgba(249,115,22,0.18)' : 'transparent', color: view === 'calculator' ? '#F9A56B' : 'rgba(255,255,255,0.6)', fontSize: '12px', cursor: 'pointer' }}>Calculator</button>
+                <button onClick={() => setView('rateCard')} style={{ padding: '6px 12px', borderRadius: '999px', border: view === 'rateCard' ? '1px solid #F97316' : '1px solid rgba(255,255,255,0.14)', background: view === 'rateCard' ? 'rgba(249,115,22,0.18)' : 'transparent', color: view === 'rateCard' ? '#F9A56B' : 'rgba(255,255,255,0.6)', fontSize: '12px', cursor: 'pointer' }}>Rate card</button>
+              </div>
+            </div>
           </header>
+
+          {view === 'calculator' ? <>
 
           {/* Context Info Bar - Location, Time, Date, Weather */}
           <div style={{ background: colors.ink, padding: '10px 20px' }}>
@@ -2388,7 +2478,7 @@ Examples:
                     </div>
                   </div>
 
-                  {/* Recommended funding route (v2.2) */}
+                  {/* Recommended funding route (v2.3) */}
                   {(() => {
                     const r = getRouting(data, calculations, config);
                     if (!r) return null;
@@ -2834,9 +2924,11 @@ Examples:
 
           </main>
 
+          </> : <RateCard config={config} colors={colors} serif={serif} goCalc={() => setView('calculator')} />}
+
           <footer style={{ padding: '20px', textAlign: 'center', fontSize: '11px', color: colors.greyLight }}>
             TAB loans are unregulated. Property at risk.<br/>
-            v2.2 dev • ICR: {config.icr.required}x @ Pay+{config.icr.stressAddOn}% • Created by DK
+            v2.3 dev • ICR: {config.icr.required}x @ Pay+{config.icr.stressAddOn}% • Created by DK
           </footer>
         </div>
       );
